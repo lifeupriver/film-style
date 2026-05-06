@@ -1,0 +1,103 @@
+name = "brand_content"
+display_name = "brand content piece"
+scene_detect_threshold = 10.0
+min_scene_length_sec = 0.4
+audio_emphasis = "interview"
+still_hold_relevant = false
+duration_range_hint_sec = [60.0, 300.0]
+
+scene_labels = [
+    "interview", "b_roll", "title_card", "product_inset",
+    "location", "archival", "establishing", "transition", "other",
+]
+
+shot_labels = [
+    "extreme_wide", "wide", "medium_wide", "medium", "medium_close",
+    "close_up", "extreme_close", "insert", "over_shoulder", "aerial", "other",
+]
+
+insert_definition = "a detail of an object or environment used as a cutaway during interview audio (product detail, hand-held object, location signage, archival paper)"
+
+[metadata_keys]
+subject_type = ["founder", "employee", "customer", "expert", "partner"]
+format = ["short_doc", "case_study", "employer_brand", "product_story", "mini_doc"]
+length_class = ["60s", "2m", "3_5m", "5m_plus"]
+interview_count = ["one", "two", "three_plus"]
+
+[prompts]
+chapter_classify_system = """You are labeling shots from a finished brand-content piece (interview-driven brand story). Each image is the middle frame of one chapter. Label each chapter with exactly one of:
+{scene_labels}
+
+'interview' is the on-camera subject speaking. 'b_roll' is supporting cutaway footage that runs under interview audio. 'title_card' is a graphic/text card. 'product_inset' is product/object focus. 'location' is environment-establishing. 'archival' is older/repurposed material.
+
+Return JSON: {{"labels": ["label1", ...]}} in image order. Use 'other' only if nothing fits."""
+
+shot_classify_system = """You are labeling shots from a brand-content piece by composition. Each image is the middle frame of one shot. For each image, output exactly one of:
+{shot_labels}
+
+Definitions:
+- extreme_wide: environment with subject tiny.
+- wide: full body, full environment.
+- medium_wide: waist-up.
+- medium: mid-thigh up.
+- medium_close: chest up — interview standard.
+- close_up: head and shoulders.
+- extreme_close: face only / hands / object detail.
+- insert: {insert_definition}.
+- over_shoulder: framed past shoulder.
+- aerial: drone / overhead.
+- other: cannot tell.
+
+Return JSON: {{"labels": ["label1", ...]}} in image order."""
+
+guide_writer_system = """You are helping a brand-content editor document their cutting style.
+You will receive detailed statistical analysis of brand-content pieces (interview-driven brand stories) they've edited.
+Write a comprehensive editing style guide in markdown that a junior editor (or an AI rough cut assembler) could follow to produce edits that match this editor's style.
+
+Be extremely specific. Use exact numbers from the data. Write rules, not descriptions. For example: "Open with 4-6 seconds of b-roll before the first interview line" beats "open visually."
+
+Structure the guide around the interview-led shape: cold open → first interview line → sustained b-roll cadence → climax → resolution. Quantify how long each interview segment runs, how often b-roll cuts under speech, and what visual rhythm holds attention.
+
+If the data includes `audio` and `transcript`, produce explicit interview/b-roll timing rules. Do not use words like: stunning, magical, seamless, breathtaking, cinematic, captivating, mesmerizing, or any similar filler."""
+
+gemini_film_prompt = """You are analyzing a finished brand-content piece (interview-driven brand story) to extract the editor's style.
+This piece is {duration} long with {cuts} cuts.
+
+Answer:
+
+1. COLD OPEN: First 10 seconds. Does it open on b-roll, on the subject, or on a title card? When does the first interview line land?
+
+2. INTERVIEW PACING: How long do single interview-shot blocks run before cutting to b-roll? How often does the editor return to the same speaker?
+
+3. B-ROLL CADENCE: Under interview audio, how frequently does the picture cut? How are b-roll shots organized — sequential, themed, abstract?
+
+4. STRUCTURE: Beginning / middle / end shape. Where is the emotional climax?
+
+5. SHOT SELECTION: Interview framing. Other shot sizes used.
+
+6. AUDIO DESIGN: Music presence. Is music constant or only in specific beats? How do natural-sound moments work?
+
+7. CLOSING: How does the piece end — final interview line, b-roll resolution, brand sign-off?
+
+8. DISTINCTIVE CHOICES: Three signature moves.
+
+Respond in structured JSON: {{"cold_open": ..., "interview_pacing": ..., "b_roll_cadence": ..., "structure": ..., "shot_selection": ..., "audio_design": ..., "closing": ..., "distinctive_choices": [...]}}"""
+
+gemini_youtube_prompt = """You are analyzing a brand-content piece on YouTube to extract its editorial style.
+
+Answer:
+
+1. COLD OPEN: First 10 seconds.
+2. INTERVIEW PACING: Single-shot duration; speaker rotation.
+3. B-ROLL CADENCE: Cut frequency under speech.
+4. STRUCTURE: Narrative shape.
+5. SHOT SELECTION: Framing patterns.
+6. AUDIO DESIGN: Music role.
+7. DISTINCTIVE CHOICES: Three signature moves.
+8. RELEVANCE: How might this style translate to the user's brand-content work?
+
+Respond in structured JSON: cold_open, interview_pacing, b_roll_cadence, structure, shot_selection, audio_design, distinctive_choices (array), relevance."""
+
+mcp_edit_in_style = """You are assembling a rough cut in {brand_name}'s brand-content editing style. Use the loaded style profile and guide as your reference; cite specific rules when you make a cut decision."""
+
+notebooklm_brief_intro = """This brief summarizes the brand-content editing style of {brand_name}, derived from {n} analyzed brand-content pieces. Use it as a reference when discussing edit choices, planning new pieces, or training assistants on this style."""

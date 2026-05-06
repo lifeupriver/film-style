@@ -1,0 +1,103 @@
+name = "social_short"
+display_name = "social short"
+scene_detect_threshold = 16.0
+min_scene_length_sec = 0.2
+audio_emphasis = "hook_driven"
+still_hold_relevant = false
+duration_range_hint_sec = [7.0, 90.0]
+
+scene_labels = [
+    "hook", "payoff", "transition", "text_overlay",
+    "jump_cut", "reveal", "cta", "establishing", "other",
+]
+
+shot_labels = [
+    "extreme_wide", "wide", "medium_wide", "medium", "medium_close",
+    "close_up", "extreme_close", "insert", "over_shoulder", "aerial", "other",
+]
+
+insert_definition = "a fast cutaway detail or text-on-screen card (typography, on-screen caption, product detail, screen recording inset)"
+
+[metadata_keys]
+platform = ["tiktok", "instagram_reels", "youtube_shorts", "x", "linkedin"]
+format = ["talking_head", "trend", "tutorial", "ugc", "skit", "listicle"]
+aspect_ratio = ["9_16", "1_1", "16_9"]
+length_class = ["7_15s", "16_30s", "31_60s", "61_90s"]
+
+[prompts]
+chapter_classify_system = """You are labeling shots from a finished social short (TikTok/Reels/Shorts). Each image is the middle frame of one chapter. Label each chapter with exactly one of:
+{scene_labels}
+
+'hook' is the opening 1-3 frames designed to stop a swipe. 'payoff' is the punchline / completion of the setup. 'transition' is a deliberate visual shift (whip pan, match cut, beat drop). 'text_overlay' is a chapter where on-screen text dominates. 'jump_cut' is a same-subject hard time-skip. 'reveal' is the moment something hidden becomes visible. 'cta' is an explicit call-to-action ('follow for more', URL, etc.).
+
+Return JSON: {{"labels": ["label1", ...]}} in image order. Use 'other' only if nothing fits."""
+
+shot_classify_system = """You are labeling shots from a social short by composition. Each image is the middle frame of one shot. For each image, output exactly one of:
+{shot_labels}
+
+Definitions:
+- extreme_wide: environment with subject tiny.
+- wide: full body.
+- medium_wide: waist-up.
+- medium: mid-thigh up.
+- medium_close: chest up — common talking-head framing.
+- close_up: head and shoulders.
+- extreme_close: face only / object detail / on-screen UI.
+- insert: {insert_definition}.
+- over_shoulder: framed past shoulder.
+- aerial: drone / overhead.
+- other: cannot tell.
+
+Return JSON: {{"labels": ["label1", ...]}} in image order."""
+
+guide_writer_system = """You are helping a social-short editor (TikTok/Reels/YouTube Shorts) document their cutting style.
+You will receive detailed statistical analysis of finished short-form videos they've edited.
+Write a comprehensive editing style guide in markdown that a junior editor (or an AI rough cut assembler) could follow to produce edits that match this editor's style.
+
+Be extremely specific. Use exact numbers from the data. Write rules, not descriptions. Example: "First cut at 0.6 seconds, never longer than 1.0s" beats "fast hook."
+
+Lead with hook design (first 3 frames), then per-second pacing rules, on-screen text frequency, jump-cut cadence, and how the payoff lands. Short-form cuts ride the algorithm — every frame justifies retention.
+
+Do not use the words: stunning, magical, seamless, breathtaking, cinematic, captivating, mesmerizing, or any similar filler."""
+
+gemini_film_prompt = """You are analyzing a finished social short (TikTok/Reels/YouTube Shorts) to extract the editor's style.
+This short is {duration} long with {cuts} cuts.
+
+Answer:
+
+1. HOOK FRAMES: What's in the very first frame? The first second? Identify the element designed to stop the scroll.
+
+2. PACING ARC: Cuts per second. Where does it accelerate / breathe?
+
+3. TEXT-ON-SCREEN: How often does on-screen text appear? When is it added — same time as VO, before, after?
+
+4. JUMP CUTS: Same-subject hard cuts. How often? What gets compressed?
+
+5. PAYOFF: When does the punchline / reveal land? What's the structure leading to it?
+
+6. CTA: Is there an explicit follow/link/swipe-up moment? When?
+
+7. SHOT SELECTION: Framing dominance.
+
+8. DISTINCTIVE CHOICES: Three signature moves.
+
+Respond in structured JSON: {{"hook_frames": ..., "pacing_arc": ..., "text_on_screen": ..., "jump_cuts": ..., "payoff": ..., "cta": ..., "shot_selection": ..., "distinctive_choices": [...]}}"""
+
+gemini_youtube_prompt = """You are analyzing a social short on YouTube to extract its editorial style.
+
+Answer:
+
+1. HOOK: First second.
+2. PACING: Cut density.
+3. TEXT-ON-SCREEN: Frequency, sync with VO.
+4. JUMP CUTS: Compression style.
+5. PAYOFF: Resolution moment.
+6. SHOT SELECTION: Framing.
+7. DISTINCTIVE CHOICES: Three signature moves.
+8. RELEVANCE: How might this style translate to the user's short-form work?
+
+Respond in structured JSON: hook, pacing, text_on_screen, jump_cuts, payoff, shot_selection, distinctive_choices (array), relevance."""
+
+mcp_edit_in_style = """You are assembling a rough cut in {brand_name}'s social-short editing style. Use the loaded style profile and guide as your reference; cite specific rules when you make a cut decision."""
+
+notebooklm_brief_intro = """This brief summarizes the social-short editing style of {brand_name}, derived from {n} analyzed shorts. Use it as a reference when discussing edit choices, planning new shorts, or training assistants on this style."""

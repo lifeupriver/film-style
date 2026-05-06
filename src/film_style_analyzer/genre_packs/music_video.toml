@@ -1,0 +1,102 @@
+name = "music_video"
+display_name = "music video"
+scene_detect_threshold = 12.0
+min_scene_length_sec = 0.25
+audio_emphasis = "beat_locked"
+still_hold_relevant = false
+duration_range_hint_sec = [120.0, 360.0]
+
+scene_labels = [
+    "performance", "narrative", "abstract", "transition",
+    "lipsync", "vfx", "establishing", "other",
+]
+
+shot_labels = [
+    "extreme_wide", "wide", "medium_wide", "medium", "medium_close",
+    "close_up", "extreme_close", "insert", "over_shoulder", "aerial", "other",
+]
+
+insert_definition = "a styling, prop, or texture detail used as visual punctuation between performance shots (instrument detail, fabric, lighting effect, environment texture)"
+
+[metadata_keys]
+genre_music = ["pop", "hip_hop", "rnb", "rock", "indie", "electronic", "country", "latin", "jazz", "classical"]
+format = ["performance", "narrative", "hybrid", "lyric", "visualizer"]
+length_class = ["under_3m", "3_4m", "4_5m", "5m_plus"]
+
+[prompts]
+chapter_classify_system = """You are labeling shots from a finished music video. Each image is the middle frame of one chapter. Label each chapter with exactly one of:
+{scene_labels}
+
+'performance' is the artist performing the song (band, solo, choreography). 'narrative' is plot/story footage. 'abstract' is non-literal visual content (textures, colors, surreal). 'lipsync' is a tight performance shot focused on mouth/face singing. 'vfx' is a CGI/composited shot. 'transition' is a beat-locked visual shift.
+
+Return JSON: {{"labels": ["label1", ...]}} in image order. Use 'other' only if nothing fits."""
+
+shot_classify_system = """You are labeling shots from a music video by composition. Each image is the middle frame of one shot. For each image, output exactly one of:
+{shot_labels}
+
+Definitions:
+- extreme_wide: environment with subject tiny.
+- wide: full body, full set.
+- medium_wide: waist-up.
+- medium: mid-thigh up.
+- medium_close: chest up.
+- close_up: head and shoulders.
+- extreme_close: face / mouth / eyes / hands.
+- insert: {insert_definition}.
+- over_shoulder: framed past shoulder.
+- aerial: drone / overhead.
+- other: cannot tell.
+
+Return JSON: {{"labels": ["label1", ...]}} in image order."""
+
+guide_writer_system = """You are helping a music-video editor document their cutting style.
+You will receive detailed statistical analysis of finished music videos they've edited.
+Write a comprehensive editing style guide in markdown that a junior editor (or an AI rough cut assembler) could follow to produce edits that match this editor's style.
+
+Be extremely specific. Use exact numbers from the data. Write rules, not descriptions. Example: "Verse cuts every 1.5–2s; chorus drops to 0.5s on the downbeat" beats "cuts on the beat."
+
+Lead with the beat-cut relationship — what % of cuts land on a beat (and which subdivision: downbeat, upbeat, half-bar, bar). Then performance/narrative/abstract balance. Then lipsync proximity rules. Then how the visual energy maps to the song's energy curve.
+
+Do not use the words: stunning, magical, seamless, breathtaking, cinematic, captivating, mesmerizing, or any similar filler."""
+
+gemini_film_prompt = """You are analyzing a finished music video to extract the editor's style.
+This video is {duration} long with {cuts} cuts.
+
+Answer:
+
+1. BEAT LOCK: What % of cuts feel locked to the beat? Are they on the downbeat, upbeat, or both? Where does the editor break beat-lock deliberately?
+
+2. PERFORMANCE vs NARRATIVE: How is screen time split? How does the editor intercut between them?
+
+3. LIPSYNC: How tight is lip-sync? Are there extended off-lipsync stretches?
+
+4. PACING ARC: How does cut density map to song dynamics (verse/chorus/bridge)?
+
+5. SHOT SELECTION: Framing dominance. How do close-ups punctuate?
+
+6. ABSTRACT / VFX: How much non-literal content? Where does it appear in the song structure?
+
+7. STRUCTURE: Opening / closing. Cold open or with the music?
+
+8. DISTINCTIVE CHOICES: Three signature moves.
+
+Respond in structured JSON: {{"beat_lock": ..., "performance_vs_narrative": ..., "lipsync": ..., "pacing_arc": ..., "shot_selection": ..., "abstract_vfx": ..., "structure": ..., "distinctive_choices": [...]}}"""
+
+gemini_youtube_prompt = """You are analyzing a music video on YouTube to extract its editorial style.
+
+Answer:
+
+1. BEAT LOCK: Cut-to-beat alignment.
+2. PERFORMANCE vs NARRATIVE: Balance.
+3. LIPSYNC: Tightness.
+4. PACING: Map to song dynamics.
+5. SHOT SELECTION: Close-up rhythm.
+6. COLOR / GRADE: Tonal approach.
+7. DISTINCTIVE CHOICES: Three signature moves.
+8. RELEVANCE: How might this style translate to the user's music-video work?
+
+Respond in structured JSON: beat_lock, performance_vs_narrative, lipsync, pacing, shot_selection, color_grade, distinctive_choices (array), relevance."""
+
+mcp_edit_in_style = """You are assembling a rough cut in {brand_name}'s music-video editing style. Use the loaded style profile and guide as your reference; cite specific rules when you make a cut decision."""
+
+notebooklm_brief_intro = """This brief summarizes the music-video editing style of {brand_name}, derived from {n} analyzed music videos. Use it as a reference when discussing edit choices, planning new videos, or training assistants on this style."""

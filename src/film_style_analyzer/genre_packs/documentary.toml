@@ -1,0 +1,105 @@
+name = "documentary"
+display_name = "documentary"
+scene_detect_threshold = 7.0
+min_scene_length_sec = 0.6
+audio_emphasis = "interview"
+still_hold_relevant = false
+duration_range_hint_sec = [180.0, 1800.0]
+
+scene_labels = [
+    "interview", "b_roll", "archival", "establishing", "title_card",
+    "verite", "recreation", "transition", "other",
+]
+
+shot_labels = [
+    "extreme_wide", "wide", "medium_wide", "medium", "medium_close",
+    "close_up", "extreme_close", "insert", "over_shoulder", "aerial", "other",
+]
+
+insert_definition = "a detail used as a cutaway under interview/narration (archival document, environmental detail, hand-held object, location signage)"
+
+[metadata_keys]
+subject_type = ["personal", "historical", "investigative", "nature", "sports", "cultural", "crime"]
+interview_count = ["one", "few", "many", "none"]
+archival_use = ["heavy", "moderate", "minimal", "none"]
+release_format = ["short_doc", "feature", "series_episode", "theatrical"]
+
+[prompts]
+chapter_classify_system = """You are labeling shots from a finished documentary. Each image is the middle frame of one chapter. Label each chapter with exactly one of:
+{scene_labels}
+
+'interview' is on-camera subjects speaking. 'b_roll' is supporting cutaway footage under interview/narration. 'archival' is older photos, footage, documents, or media. 'verite' is unmediated real-time footage where action unfolds. 'recreation' is staged footage representing past events. 'establishing' is a scene-setting wide. 'title_card' is text/graphic.
+
+Return JSON: {{"labels": ["label1", ...]}} in image order. Use 'other' only if nothing fits."""
+
+shot_classify_system = """You are labeling shots from a documentary by composition. Each image is the middle frame of one shot. For each image, output exactly one of:
+{shot_labels}
+
+Definitions:
+- extreme_wide: landscape / environment with subjects tiny.
+- wide: full body / full environment.
+- medium_wide: waist-up.
+- medium: mid-thigh up.
+- medium_close: chest up — interview standard.
+- close_up: head and shoulders.
+- extreme_close: face / hands / object detail / archival fragment.
+- insert: {insert_definition}.
+- over_shoulder: framed past shoulder.
+- aerial: drone / overhead.
+- other: cannot tell.
+
+Return JSON: {{"labels": ["label1", ...]}} in image order."""
+
+guide_writer_system = """You are helping a documentary editor document their cutting style.
+You will receive detailed statistical analysis of finished documentaries they've edited.
+Write a comprehensive editing style guide in markdown that a junior editor (or an AI rough cut assembler) could follow to produce edits that match this editor's style.
+
+Be extremely specific. Use exact numbers from the data. Write rules, not descriptions. Example: "Average interview block is 18 seconds before cutting to b-roll" beats "longer interview holds."
+
+Cover the documentary spine: cold open, act structure, interview pacing, b-roll cadence under speech, use of archival, vérité moments, recreation policy, and how the closing act resolves. Documentary cutting respects the subject — quantify how long pauses are allowed, when silence is left in.
+
+Do not use the words: stunning, magical, seamless, breathtaking, cinematic, captivating, mesmerizing, or any similar filler."""
+
+gemini_film_prompt = """You are analyzing a finished documentary to extract the editor's style.
+This piece is {duration} long with {cuts} cuts.
+
+Answer:
+
+1. COLD OPEN: First 60 seconds. Title card placement, archival vs vérité vs interview opening.
+
+2. ACT STRUCTURE: Identify the major story turns. Where do they fall percentage-wise?
+
+3. INTERVIEW PACING: Average single-shot interview duration. How often does the editor cut between speakers?
+
+4. B-ROLL CADENCE: Under interview/narration audio, how frequently does picture cut?
+
+5. ARCHIVAL: How is older material integrated? Always boxed, full-frame, with treatment?
+
+6. VÉRITÉ / SILENCE: Where does the editor allow real-time unfolding without commentary? Are silences permitted?
+
+7. RECREATION: If used, how is it visually distinguished from primary footage?
+
+8. CLOSING: How does the documentary land its final beat?
+
+9. DISTINCTIVE CHOICES: Three signature moves.
+
+Respond in structured JSON: {{"cold_open": ..., "act_structure": ..., "interview_pacing": ..., "b_roll_cadence": ..., "archival": ..., "verite_silence": ..., "recreation": ..., "closing": ..., "distinctive_choices": [...]}}"""
+
+gemini_youtube_prompt = """You are analyzing a documentary on YouTube to extract its editorial style.
+
+Answer:
+
+1. COLD OPEN: First 60 seconds.
+2. ACT STRUCTURE: Major story beats.
+3. INTERVIEW PACING: Single-shot duration; speaker rotation.
+4. B-ROLL CADENCE: Cut frequency under speech.
+5. ARCHIVAL: Integration approach.
+6. VÉRITÉ: Allowance for unmediated time.
+7. DISTINCTIVE CHOICES: Three signature moves.
+8. RELEVANCE: How might this style translate to the user's documentary work?
+
+Respond in structured JSON: cold_open, act_structure, interview_pacing, b_roll_cadence, archival, verite, distinctive_choices (array), relevance."""
+
+mcp_edit_in_style = """You are assembling a rough cut in {brand_name}'s documentary editing style. Use the loaded style profile and guide as your reference; cite specific rules when you make a cut decision."""
+
+notebooklm_brief_intro = """This brief summarizes the documentary editing style of {brand_name}, derived from {n} analyzed documentaries. Use it as a reference when discussing edit choices, planning new pieces, or training assistants on this style."""

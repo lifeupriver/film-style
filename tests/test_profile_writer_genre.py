@@ -52,6 +52,50 @@ def test_profile_includes_genre_extensions_key():
     assert isinstance(profile["genre_extensions"], dict)
 
 
+import pytest
+
+
+@pytest.mark.parametrize("genre,emphasis", [
+    ("commercial", "voiceover_first"),
+    ("brand_content", "interview"),
+    ("social_short", "hook_driven"),
+    ("music_video", "beat_locked"),
+    ("documentary", "interview"),
+])
+def test_each_genre_emits_appropriate_audio_rule(genre, emphasis):
+    pack = genre_pack.load(genre)
+    assert pack.audio_emphasis == emphasis
+    aggregated = {
+        "transitions": {"hard_cut_pct": 90, "dissolve_pct": 10},
+        "audio": {
+            "first_speech_at_pct_avg": 5,
+            "first_speech_at_sec_avg": 1.2,
+            "speech_over_music_pct_avg": 60,
+        },
+    }
+    profile = build_profile([_mk_minimal_film()], aggregated, pack=pack)
+    rules = " ".join(profile.get("rules", []))
+    # Non-wedding packs must NOT emit the music_first holdback rule.
+    assert "Hold music alone" not in rules
+
+
+def test_non_wedding_pack_suppresses_still_hold_rule():
+    """still_hold_relevant=false means no still-hold rule even if data has it."""
+    pack = genre_pack.load("commercial")
+    aggregated = {
+        "transitions": {
+            "hard_cut_pct": 80,
+            "dissolve_pct": 15,
+            "still_hold_pct": 5,
+            "avg_dissolves_per_film": 8,
+            "avg_still_holds_per_film": 3,
+        },
+    }
+    profile = build_profile([_mk_minimal_film()], aggregated, pack=pack)
+    rules = " ".join(profile.get("rules", []))
+    assert "still-hold" not in rules
+
+
 def test_wedding_emits_music_first_and_still_hold_rules():
     pack = genre_pack.load("wedding")
     aggregated = {

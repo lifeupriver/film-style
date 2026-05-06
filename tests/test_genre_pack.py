@@ -71,3 +71,28 @@ def test_scene_and_shot_labels_have_minimal_overlap():
     pack = genre_pack.load("wedding")
     overlap = set(pack.scene_labels) & set(pack.shot_labels)
     assert overlap <= {"other"}, f"unexpected scene/shot overlap: {overlap - {'other'}}"
+
+
+@pytest.mark.parametrize("name", [
+    "wedding", "commercial", "brand_content",
+    "social_short", "music_video", "documentary",
+])
+def test_all_shipped_packs_load(name):
+    pack = genre_pack.load(name)
+    assert pack.name == name
+    assert pack.display_name
+    assert pack.scene_labels
+    assert pack.shot_labels
+    assert pack.audio_emphasis in {
+        "music_first", "voiceover_first", "beat_locked",
+        "interview", "hook_driven",
+    }
+    assert len(pack.scene_labels) == len(set(pack.scene_labels))
+    assert len(pack.shot_labels) == len(set(pack.shot_labels))
+    for key in (
+        "guide_writer_system", "chapter_classify_system",
+        "shot_classify_system", "gemini_film_prompt",
+        "gemini_youtube_prompt", "mcp_edit_in_style",
+        "notebooklm_brief_intro",
+    ):
+        assert key in pack.prompts

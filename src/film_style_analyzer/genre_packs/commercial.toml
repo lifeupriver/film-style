@@ -1,0 +1,107 @@
+name = "commercial"
+display_name = "commercial"
+scene_detect_threshold = 14.0
+min_scene_length_sec = 0.3
+audio_emphasis = "voiceover_first"
+still_hold_relevant = false
+duration_range_hint_sec = [6.0, 120.0]
+
+scene_labels = [
+    "hook", "product_reveal", "lifestyle", "demo", "talking_head",
+    "cta", "logo", "kicker", "establishing", "transition", "other",
+]
+
+shot_labels = [
+    "extreme_wide", "wide", "medium_wide", "medium", "medium_close",
+    "close_up", "extreme_close", "insert", "over_shoulder", "aerial", "other",
+]
+
+insert_definition = "a detail of an object or screen content (product detail, typography, screen UI, brand mark, packaging close-up)"
+
+[metadata_keys]
+client = []
+product_category = ["consumer_electronics", "auto", "fashion", "fmcg", "beauty", "finance", "tech_b2b", "food_drink", "service", "other"]
+placement = ["broadcast_30", "broadcast_15", "youtube_pre_roll", "social_in_feed", "out_of_home", "long_form", "other"]
+length_class = ["6s", "15s", "30s", "60s", "90s_plus"]
+campaign_tone = ["aspirational", "humor", "informational", "emotional", "performance", "brand"]
+
+[prompts]
+chapter_classify_system = """You are labeling shots from a finished commercial. Each image is the middle frame of one chapter. Label each chapter with exactly one of:
+{scene_labels}
+
+A 'hook' is the opening grab (first 1-3 seconds, must stop the scroll). 'product_reveal' is the moment the product is first clearly shown. 'demo' shows the product being used. 'lifestyle' is aspirational context, person/world without explicit product focus. 'talking_head' is on-camera spokesperson/customer. 'cta' is a direct call-to-action (URL, offer, action verb). 'kicker' is the brand-level closing beat after the cta. 'logo' is the brand lockup itself.
+
+Return JSON: {{"labels": ["label1", ...]}} in image order. Use 'other' only if nothing fits."""
+
+shot_classify_system = """You are labeling shots from a commercial by composition. Each image is the middle frame of one shot. For each image, output exactly one of:
+{shot_labels}
+
+Definitions:
+- extreme_wide: location with subjects tiny.
+- wide: full body, full set/environment.
+- medium_wide: waist-up, two-shot.
+- medium: mid-thigh up.
+- medium_close: chest up.
+- close_up: head and shoulders.
+- extreme_close: face only / eyes / single product detail.
+- insert: {insert_definition}.
+- over_shoulder: framed past someone's shoulder.
+- aerial: drone / overhead.
+- other: cannot tell.
+
+Return JSON: {{"labels": ["label1", ...]}} in image order."""
+
+guide_writer_system = """You are helping a commercial editor document their cutting style.
+You will receive detailed statistical analysis of finished commercials they've edited.
+Write a comprehensive editing style guide in markdown that a junior editor (or an AI rough cut assembler) could follow to produce edits that match this editor's style.
+
+Be extremely specific. Use exact numbers from the data. Write rules, not descriptions. For example: "Hook lands within 0.8 seconds, never longer than 1.2 seconds" beats vague language.
+
+Structure the guide around the commercial spine: hook → product reveal → demo/lifestyle → CTA → kicker. Quantify how long each beat runs, what shot sizes dominate where, and how voiceover lines up with picture.
+
+If the data includes a `scene_breakdown`, produce a per-beat rules table. If it includes `audio` and `transcript`, produce explicit voiceover/music timing rules. If it includes `gemini_analyses`, weave specific distinctive choices into the guide.
+
+Do not use the words: stunning, magical, seamless, breathtaking, cinematic, captivating, mesmerizing, or any similar filler."""
+
+gemini_film_prompt = """You are analyzing a finished commercial to extract the editor's style.
+This piece is {duration} long with {cuts} cuts.
+
+Answer these questions precisely:
+
+1. HOOK: What happens in the first 3 seconds? Identify the exact moment intended to stop a viewer scrolling. How is it shot?
+
+2. PRODUCT REVEAL: When does the product first appear cleanly on screen? How is it framed?
+
+3. PACING ARC: Map cut frequency across the runtime. Where does it accelerate, where does it breathe?
+
+4. VOICEOVER vs PICTURE: How does VO line up with cuts — does picture lead VO, or VO lead picture? When does the VO start?
+
+5. SHOT SELECTION: Mix of wides/mediums/inserts. How often do inserts cut to product/screen content?
+
+6. CTA: When does the CTA enter? How long does it hold? On-screen text vs voiceover vs both?
+
+7. CLOSING / KICKER: How does the spot end — logo lockup duration, music tail, fade behavior?
+
+8. DISTINCTIVE CHOICES: Three things that make this editor's commercial work recognizable.
+
+Respond in structured JSON with one key per question:
+{{"hook": ..., "product_reveal": ..., "pacing_arc": ..., "voiceover_vs_picture": ..., "shot_selection": ..., "cta": ..., "closing_kicker": ..., "distinctive_choices": [...]}}"""
+
+gemini_youtube_prompt = """You are analyzing a commercial on YouTube to extract its editorial style.
+
+Answer:
+
+1. HOOK: First 3 seconds — what stops the scroll?
+2. PACING: Cut frequency arc. Where does it accelerate?
+3. SHOT SELECTION: Wide/medium/close mix. Insert frequency.
+4. AUDIO DESIGN: Voiceover entry, music role, sound design accents.
+5. COLOR / GRADE: Tonal approach.
+6. STRUCTURE: Hook → reveal → demo → CTA mapping.
+7. DISTINCTIVE CHOICES: Three signature moves.
+8. RELEVANCE: How might this style translate to the user's commercial work?
+
+Respond in structured JSON: hook, pacing, shot_selection, audio_design, color_grade, structure, distinctive_choices (array), relevance."""
+
+mcp_edit_in_style = """You are assembling a rough cut in {brand_name}'s commercial-editing style. Use the loaded style profile and guide as your reference; cite specific rules when you make a cut decision."""
+
+notebooklm_brief_intro = """This brief summarizes the commercial-editing style of {brand_name}, derived from {n} analyzed commercials. Use it as a reference when discussing edit choices, planning new spots, or training assistants on this style."""
