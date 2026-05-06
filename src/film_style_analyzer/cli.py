@@ -667,3 +667,124 @@ def config(init: bool) -> None:
     console.print(f"Config path: {CONFIG_PATH} (exists: {CONFIG_PATH.exists()})")
     for k, v in cfg.__dict__.items():
         console.print(f"  {k} = {v}")
+
+
+# ---------------------------------------------------------------------------
+# Genre command group
+# ---------------------------------------------------------------------------
+
+@cli.group()
+def genre() -> None:
+    """Inspect and manage genre packs."""
+
+
+@genre.command("list")
+def genre_list() -> None:
+    """List available genre packs (shipped + user)."""
+    from .genre_pack import SHIPPED_PACK_DIR, USER_PACK_DIR, list_available
+    table = Table(title="Available genre packs")
+    table.add_column("Name")
+    table.add_column("Source")
+    for name in list_available():
+        user_has = (USER_PACK_DIR / f"{name}.toml").exists()
+        shipped_has = (SHIPPED_PACK_DIR / f"{name}.toml").exists()
+        if user_has and shipped_has:
+            source = "user override"
+        elif user_has:
+            source = "user"
+        else:
+            source = "shipped"
+        table.add_row(name, source)
+    console.print(table)
+
+
+@genre.command("show")
+@click.argument("name")
+def genre_show(name: str) -> None:
+    """Print a pack's contents."""
+    from .genre_pack import GenrePackError
+    try:
+        pack = load_genre_pack(name)
+    except GenrePackError as e:
+        raise click.ClickException(str(e))
+    console.print(f"[bold]{pack.name}[/bold] — {pack.display_name}")
+    console.print(f"scene_detect_threshold: {pack.scene_detect_threshold}")
+    console.print(f"min_scene_length_sec: {pack.min_scene_length_sec}")
+    console.print(f"audio_emphasis: {pack.audio_emphasis}")
+    console.print(f"still_hold_relevant: {pack.still_hold_relevant}")
+    console.print(f"duration_range_hint_sec: {pack.duration_range_hint_sec}")
+    console.print(f"scene_labels: {', '.join(pack.scene_labels)}")
+    console.print(f"shot_labels: {', '.join(pack.shot_labels)}")
+    console.print(f"insert_definition: {pack.insert_definition}")
+    console.print(f"metadata_keys: {list(pack.metadata_keys.keys())}")
+
+
+@genre.command("current")
+def genre_current() -> None:
+    """Print the active genre from config."""
+    cfg = load_config()
+    console.print(getattr(cfg, "default_genre", "wedding"))
+
+
+@genre.command("init")
+@click.argument("name")
+def genre_init(name: str) -> None:
+    """Scaffold a new user pack at ~/.film-style-analyzer/genre_packs/<name>.toml."""
+    from .genre_pack import SHIPPED_PACK_DIR, USER_PACK_DIR
+    USER_PACK_DIR.mkdir(parents=True, exist_ok=True)
+    target = USER_PACK_DIR / f"{name}.toml"
+    if target.exists():
+        raise click.ClickException(f"already exists: {target}")
+    template = (SHIPPED_PACK_DIR / "wedding.toml").read_text()
+    header = (
+        f"# {name}.toml — user-defined genre pack.\n"
+        f"# Edit this file then run: film-style genre show {name}\n"
+        f"# Place under ~/.film-style-analyzer/genre_packs/ to override "
+        f"a shipped pack of the same name.\n\n"
+    )
+    body = template.replace('name = "wedding"', f'name = "{name}"', 1)
+    target.write_text(header + body)
+    console.print(f"[green]wrote[/green] {target}")
+
+
+# ---------------------------------------------------------------------------
+# Migration: legacy flat layout → per-genre subfolders
+# ---------------------------------------------------------------------------
+
+LEGACY_LAYOUT_FILES = (
+    "analyses", "thumbs", "audio",
+    "inspirations.json", "aggregate-stats.json",
+    "style-profile.json", "style-guide.md", "notebooklm-brief.md",
+)
+
+
+def _legacy_layout_present() -> bool:
+    """True iff legacy flat layout (analyses/ at root) is detected."""
+    return (DATA_ROOT / "analyses").is_dir()
+
+
+@cli.command()
+@click.option("--to", "to_genre", default=None,
+              help="Genre to migrate legacy data into. Default: config default_genre.")
+def migrate(to_genre: str | None) -> None:
+    """Move legacy flat layout into ~/.film-style-analyzer/<genre>/."""
+    import shutil
+    if not _legacy_layout_present():
+        raise click.ClickException("no legacy layout detected; nothing to migrate.")
+    target = to_genre or getattr(load_config(), "default_genre", "wedding")
+    target_root = DATA_ROOT / target
+    target_root.mkdir(parents=True, exist_ok=True)
+    moved: list[str] = []
+    for name in LEGACY_LAYOUT_FILES:
+        src = DATA_ROOT / name
+        if not src.exists():
+            continue
+        dst = target_root / name
+        if dst.exists():
+            console.print(f"[yellow]skip[/yellow] {name} — already exists at {dst}")
+            continue
+        shutil.move(str(src), str(dst))
+        moved.append(name)
+    console.print(f"[green]moved[/green] {len(moved)} items into {target_root}")
+    for m in moved:
+        console.print(f"  • {m}")

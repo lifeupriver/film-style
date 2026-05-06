@@ -25,6 +25,9 @@ class Config:
     thumbnail_quality: int = 2
     cleanup_audio_after_analysis: bool = True
 
+    # Active genre — partitions ~/.film-style-analyzer/<genre>/.
+    default_genre: str = "wedding"
+
 
 def load(path: Path | None = None) -> Config:
     p = path or CONFIG_PATH
