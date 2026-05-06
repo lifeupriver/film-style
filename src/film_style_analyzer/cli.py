@@ -227,7 +227,7 @@ def guide(output: Path, profile_output: Path, model: str | None,
     console.print(f"[green]wrote[/green] {profile_output} ({len(profile.get('rules', []))} rules)")
 
     console.print(f"[bold]Aggregated[/bold] {stats['film_count']} films → calling Claude…")
-    md = write_guide(stats, model=model)
+    md = write_guide(stats, pack, model=model)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(md)
     console.print(f"[green]wrote[/green] {output}")
@@ -602,6 +602,8 @@ def export_notebooklm(output: Path, no_inspirations: bool) -> None:
     """Export a markdown brief suitable for ingesting into NotebookLM."""
     from .notebooklm_export import write_brief
 
+    cfg = load_config()
+    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
     analyses: list[FilmAnalysis] = []
     for p in sorted(ANALYSES_DIR.glob("*.json")):
         try:
@@ -629,7 +631,8 @@ def export_notebooklm(output: Path, no_inspirations: bool) -> None:
             except json.JSONDecodeError:
                 inspirations = None
 
-    write_brief(analyses, profile, output, inspirations=inspirations)
+    write_brief(analyses, profile, output, pack,
+                inspirations=inspirations, brand_name=cfg.brand_name)
     console.print(f"[green]wrote[/green] {output}")
     console.print(
         f"  Open it, copy its contents, and in NotebookLM click "

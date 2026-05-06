@@ -18,15 +18,25 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .genre_pack import GenrePack
 from .schemas import FilmAnalysis
+
+
+def build_brief_intro(pack: GenrePack, brand_name: str, n: int) -> str:
+    """Render the per-genre opening paragraph using the pack's prompt template."""
+    return pack.prompts["notebooklm_brief_intro"].format(
+        brand_name=brand_name, n=n
+    )
 
 
 def export_brief(
     films: list[FilmAnalysis],
     profile: dict[str, Any],
+    pack: GenrePack,
     inspirations: list[dict] | None = None,
     *,
     title: str = "Editing Style Profile",
+    brand_name: str = "the editor",
 ) -> str:
     """Produce a markdown document suitable for NotebookLM ingestion."""
     out: list[str] = []
@@ -35,8 +45,10 @@ def export_brief(
     out.append("")
     out.append(
         f"_Generated {datetime.now(timezone.utc).strftime('%Y-%m-%d')} from "
-        f"{len(films)} analyzed wedding films._"
+        f"{len(films)} analyzed {pack.display_name}s._"
     )
+    out.append("")
+    out.append(build_brief_intro(pack, brand_name=brand_name, n=len(films)))
     out.append("")
     out.append(
         "This document is a complete profile of one editor's style. Treat "
@@ -345,10 +357,15 @@ def write_brief(
     films: list[FilmAnalysis],
     profile: dict,
     output_path: Path,
+    pack: GenrePack,
     *,
     inspirations: list[dict] | None = None,
     title: str = "Editing Style Profile",
+    brand_name: str = "the editor",
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(export_brief(films, profile, inspirations, title=title))
+    output_path.write_text(
+        export_brief(films, profile, pack, inspirations,
+                     title=title, brand_name=brand_name)
+    )
     return output_path

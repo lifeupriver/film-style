@@ -174,7 +174,7 @@ def analyze_film(
         from .gemini_analyzer import GeminiError, analyze as run_gemini_analyze
         try:
             gemini_data = run_gemini_analyze(
-                path, duration_sec=meta.duration_sec, cut_count=len(clips),
+                path, pack, duration_sec=meta.duration_sec, cut_count=len(clips),
                 model_name=gemini_model,
             )
         except GeminiError as e:

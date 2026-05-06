@@ -2,10 +2,13 @@
 
 from datetime import datetime, timezone
 
+from film_style_analyzer import genre_pack
 from film_style_analyzer.notebooklm_export import _gather_top_transcript_excerpts, export_brief
 from film_style_analyzer.schemas import (
     Clip, Cuts, FilmAnalysis, FilmMeta, Pacing, Structure, Transitions,
 )
+
+PACK = genre_pack.load("wedding")
 
 
 def _mk(filename, *, transcript=None, metadata=None):
@@ -56,7 +59,7 @@ def test_export_brief_basic():
         "structure": {"opening": {"first_cut_at_sec_target": 5.0},
                       "closing": {"fade_to_black_ratio": 0.8}},
     }
-    md = export_brief([_mk("a.mp4"), _mk("b.mp4")], profile)
+    md = export_brief([_mk("a.mp4"), _mk("b.mp4")], profile, PACK)
     # Headlines all present.
     for header in ("Binding Rules", "Pacing Curve", "Transitions",
                    "Audio Design", "Color & Grade",
@@ -82,7 +85,7 @@ def test_export_brief_includes_inspirations():
             "relevance": "Translate the slow opens to your getting-ready scenes.",
         },
     }]
-    md = export_brief([_mk("a.mp4")], profile, inspirations=inspirations)
+    md = export_brief([_mk("a.mp4")], profile, PACK, inspirations=inspirations)
     assert "YouTube Inspirations" in md
     assert "youtube.com/watch?v=abc" in md
     assert "Long static holds" in md
@@ -94,7 +97,7 @@ def test_export_brief_describes_pacing_shape():
         "rules": [],
         "pacing": {"decile_curve": [6, 6, 4, 3, 2.5, 2.5, 3, 3, 4, 5]},
     }
-    md = export_brief([_mk("a.mp4")], profile)
+    md = export_brief([_mk("a.mp4")], profile, PACK)
     # Should detect "opens slowly" and "accelerates through the middle".
     assert "Shape:" in md
 
@@ -119,6 +122,6 @@ def test_gather_excerpts_handles_no_transcript():
 
 def test_export_brief_marks_metadata():
     f = _mk("a.mp4", metadata={"venue": "outdoor", "season": "summer"})
-    md = export_brief([f], {"rules": []})
+    md = export_brief([f], {"rules": []}, PACK)
     assert "venue: outdoor" in md
     assert "season: summer" in md

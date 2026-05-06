@@ -418,7 +418,7 @@ def tool_generate_guide(
     STATS_PATH.write_text(json.dumps(stats, indent=2, default=str))
 
     try:
-        md = write_guide(stats, model=cfg.anthropic_model)
+        md = write_guide(stats, pack, model=cfg.anthropic_model)
         GUIDE_PATH.write_text(md)
         guide_status = "written"
     except Exception as e:
@@ -567,10 +567,14 @@ def tool_analyze_youtube_via_gemini(
 
     Returns the Gemini analysis dict.
     """
+    from .config import load as load_config
     from .gemini_analyzer import GeminiError, analyze_youtube_url
+    from .genre_pack import load as load_genre_pack
 
+    cfg = load_config()
+    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
     try:
-        result = analyze_youtube_url(url, custom_prompt=custom_prompt)
+        result = analyze_youtube_url(url, pack, custom_prompt=custom_prompt)
     except GeminiError as e:
         raise MCPServerError(str(e))
 
@@ -629,8 +633,12 @@ def tool_export_for_notebooklm(
 
     Returns the path and content (so the LLM can preview / discuss it).
     """
+    from .config import load as load_config
+    from .genre_pack import load as load_genre_pack
     from .notebooklm_export import write_brief
 
+    cfg = load_config()
+    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
     films = _load_all_films()
     if not films:
         raise MCPServerError(
@@ -657,9 +665,10 @@ def tool_export_for_notebooklm(
         DATA_ROOT / "notebooklm-brief.md"
     )
     write_brief(
-        films, profile, target,
+        films, profile, target, pack,
         inspirations=inspirations,
         title=title or "Editing Style Profile (for NotebookLM)",
+        brand_name=cfg.brand_name,
     )
     content = target.read_text()
     return {

@@ -1,4 +1,8 @@
-"""Optional Gemini 2.5 Pro narrative analysis of a wedding film."""
+"""Optional Gemini 2.5 Pro narrative analysis of a finished film.
+
+The narrative prompt comes from the active genre pack so commercial,
+documentary, music-video, etc. analyses ask the right questions.
+"""
 
 from __future__ import annotations
 
@@ -8,38 +12,15 @@ import re
 import time
 from pathlib import Path
 
-PROMPT = """You are analyzing a finished wedding film to extract the editor's style.
-This film is {duration} long with {cuts} cuts.
+from .genre_pack import GenrePack
 
-Analyze the film and answer these questions precisely:
 
-1. OPENING: Describe the first 30 seconds. What is the first shot? How many
-   establishing shots before the first "story" shot? When does the music start?
-   When does the first cut happen?
+def build_film_prompt(pack: GenrePack, duration: str, cuts: int) -> str:
+    return pack.prompts["gemini_film_prompt"].format(duration=duration, cuts=cuts)
 
-2. SCENE FLOW: List every scene transition you observe. What visual or audio
-   cue marks each transition? Are scenes strictly chronological or does the
-   editor intercut between parallel timelines?
 
-3. AUDIO DESIGN: When does ceremony/speech audio first appear? Over what
-   visuals is it placed? How long do speech excerpts run? Does the music ever
-   fully cut out or always play underneath?
-
-4. PACING FEEL: Where does the edit feel slow and lingering vs. fast and
-   energetic? Is there a build? Where is the emotional peak?
-
-5. SHOT SELECTION: Does the editor favor wide shots, close-ups, or a specific
-   mix? Do you see a pattern in how shot sizes alternate?
-
-6. CLOSING: Describe the final 30 seconds. How does the film end? What is the
-   last shot? Is there a fade? How long does the final shot hold?
-
-7. DISTINCTIVE CHOICES: What 3 things make this editor's style recognizable?
-   What would you notice if you watched 10 of their films?
-
-Respond in structured JSON with one top-level key per question:
-{{"opening": ..., "scene_flow": ..., "audio_design": ..., "pacing_feel": ...,
-"shot_selection": ..., "closing": ..., "distinctive_choices": [...]}}"""
+def build_youtube_prompt(pack: GenrePack) -> str:
+    return pack.prompts["gemini_youtube_prompt"]
 
 
 class GeminiError(RuntimeError):
@@ -63,40 +44,9 @@ def _extract_json(text: str) -> dict:
     return json.loads(payload)
 
 
-YOUTUBE_PROMPT = """You are analyzing a wedding film (or a film whose editing
-style might inspire wedding-film editing) on YouTube.
-
-Answer these questions precisely:
-
-1. PACING: How does the editor handle pacing? Is it fast or slow? Does it
-   build, plateau, or release? Where does it accelerate?
-
-2. SHOT SELECTION: What kinds of shots dominate (wide/medium/close-up,
-   handheld/locked, drone)? Is there a pattern in how shot sizes alternate?
-
-3. AUDIO DESIGN: When does music play? When does speech enter? Does music
-   continue under speech or drop out? Are ambient sounds featured?
-
-4. COLOR / GRADE: What's the dominant tonal approach (warm/cool, low-key/
-   high-key, saturated/desaturated)? Any signature looks (e.g., milky shadows,
-   crushed blacks, lifted contrast)?
-
-5. STRUCTURE: How does the film open and close? What's the narrative arc?
-
-6. DISTINCTIVE CHOICES: Three things that make this editor's style
-   recognizable. What would you notice if you watched 10 of their films?
-
-7. RELEVANCE: How might this style translate to wedding-film editing?
-   What would be a clear and specific takeaway for the user's edits?
-
-Respond in structured JSON with one top-level key per question:
-opening, pacing, shot_selection, audio_design, color_grade, structure,
-distinctive_choices (array), relevance.
-"""
-
-
 def analyze_youtube_url(
     url: str,
+    pack: GenrePack,
     *,
     custom_prompt: str | None = None,
     model_name: str = "gemini-2.5-pro",
@@ -125,7 +75,7 @@ def analyze_youtube_url(
 
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel(model_name)
-    prompt = custom_prompt or YOUTUBE_PROMPT
+    prompt = custom_prompt or build_youtube_prompt(pack)
 
     try:
         response = model.generate_content(
@@ -152,7 +102,7 @@ def analyze_youtube_url(
     }
 
 
-def analyze(film_path: Path, duration_sec: float, cut_count: int,
+def analyze(film_path: Path, pack: GenrePack, duration_sec: float, cut_count: int,
             model_name: str = "gemini-2.5-pro") -> dict:
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -183,7 +133,7 @@ def analyze(film_path: Path, duration_sec: float, cut_count: int,
             raise GeminiError(f"upload did not become ACTIVE (state={uploaded.state.name})")
 
         model = genai.GenerativeModel(model_name)
-        prompt = PROMPT.format(duration=_format_duration(duration_sec), cuts=cut_count)
+        prompt = build_film_prompt(pack, duration=_format_duration(duration_sec), cuts=cut_count)
         try:
             response = model.generate_content(
                 [uploaded, prompt],
