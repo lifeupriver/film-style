@@ -84,8 +84,9 @@ def analyze(
     whisper_model: str | None, language: str | None, no_diarize: bool,
     gemini: bool, gemini_model: str | None, keep_audio: bool,
 ) -> None:
-    """Analyze one or more finished wedding films."""
+    """Analyze one or more finished films."""
     cfg = load_config()
+    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
     min_scene_sec = min_scene_sec if min_scene_sec is not None else cfg.min_scene_length_sec
     threshold = threshold if threshold is not None else cfg.scene_detect_threshold
     whisper_model = whisper_model or cfg.whisper_model
@@ -117,7 +118,7 @@ def analyze(
             progress.update(task, description=f"analyzing {film.name}")
             try:
                 result = analyze_film(
-                    film, THUMBS_DIR,
+                    film, THUMBS_DIR, pack,
                     audio_root=AUDIO_DIR,
                     min_scene_length_sec=min_scene_sec,
                     threshold=threshold,
@@ -439,7 +440,11 @@ def match(stem: str, top: int) -> None:
 @click.option("--show", is_flag=True, help="Print existing tags and exit.")
 def tag(stem: str, set_: tuple[str, ...], unset: tuple[str, ...], show: bool) -> None:
     """View / edit per-film metadata (venue, season, music genre, etc.)."""
-    from .metadata import CURATED_KEYS, parse_set_arg, merge as merge_md
+    from .metadata import curated_keys, parse_set_arg, merge as merge_md
+
+    cfg = load_config()
+    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
+    keys = curated_keys(pack)
 
     target = ANALYSES_DIR / f"{stem}.json"
     if not target.exists():
@@ -462,10 +467,10 @@ def tag(stem: str, set_: tuple[str, ...], unset: tuple[str, ...], show: bool) ->
             k, v = parse_set_arg(arg)
         except ValueError as e:
             raise click.ClickException(str(e))
-        if k in CURATED_KEYS and v not in CURATED_KEYS[k]:
+        if k in keys and keys[k] and v not in keys[k]:
             console.print(
                 f"[yellow]note[/yellow] '{v}' is not in the curated values for '{k}': "
-                f"{', '.join(CURATED_KEYS[k])}. Saving anyway."
+                f"{', '.join(keys[k])}. Saving anyway."
             )
         updates[k] = v
     for k in unset:

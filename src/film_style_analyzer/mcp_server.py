@@ -270,8 +270,10 @@ def tool_analyze_films(
     """
     from .analyzer import analyze_film
     from .config import load as load_config
+    from .genre_pack import load as load_genre_pack
 
     cfg = load_config()
+    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
     files = _expand_video_paths(paths)
     ANALYSES_DIR.mkdir(parents=True, exist_ok=True)
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
@@ -287,7 +289,7 @@ def tool_analyze_films(
             continue
         try:
             result = analyze_film(
-                f, THUMBS_DIR,
+                f, THUMBS_DIR, pack,
                 audio_root=AUDIO_DIR,
                 min_scene_length_sec=cfg.min_scene_length_sec,
                 threshold=cfg.scene_detect_threshold,

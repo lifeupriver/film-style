@@ -22,7 +22,8 @@ from urllib.parse import unquote, urlparse
 from .aggregator import aggregate
 from .config import CONFIG_PATH, Config, load as load_config
 from .fcpxml_parser import parse as parse_fcpxml
-from .metadata import CURATED_KEYS, merge as merge_md
+from .genre_pack import load as load_genre_pack
+from .metadata import curated_keys, merge as merge_md
 from .schemas import FilmAnalysis
 
 DATA_ROOT = Path.home() / ".film-style-analyzer"
@@ -173,7 +174,9 @@ def _make_handler():
 
             if path == "/api/metadata-keys":
                 # Returns the curated key→[allowed values] dict for dropdowns.
-                return self._send_json(CURATED_KEYS)
+                cfg = load_config()
+                pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
+                return self._send_json(curated_keys(pack))
 
             if path.startswith("/api/match/"):
                 stem = path[len("/api/match/"):].strip("/")

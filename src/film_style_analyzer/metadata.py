@@ -1,25 +1,17 @@
-"""Per-wedding metadata. Free-form key/value, but with a curated key set the
-dashboard surfaces as dropdowns.
-
-The interesting metadata isn't free text — it's the dimensions an editor
-actually cuts differently along: venue type, season, ceremony length, music
-genre. Profiles can be segmented by these axes downstream.
+"""Per-film metadata. Free-form key/value, with a curated set the dashboard
+surfaces as dropdowns. The curated keys come from the active genre pack —
+weddings cut differently along venue/season/ceremony, commercials along
+client/product_category/placement, and so on.
 """
 
 from __future__ import annotations
 
-CURATED_KEYS = {
-    "venue":         ["indoor", "outdoor", "destination", "church", "barn",
-                      "estate", "beach", "garden", "ballroom"],
-    "season":        ["spring", "summer", "autumn", "winter"],
-    "time_of_day":   ["morning", "afternoon", "golden_hour", "evening", "night"],
-    "ceremony":      ["religious", "civil", "spiritual", "elopement", "vow_renewal"],
-    "guest_count":   ["intimate", "small", "medium", "large", "huge"],
-    "music_genre":   ["acoustic", "indie", "folk", "pop", "classical",
-                      "instrumental", "jazz", "electronic", "soul"],
-    "weather":       ["sunny", "overcast", "rainy", "snowy", "stormy"],
-    "duration_target": ["short", "standard", "long"],
-}
+from .genre_pack import GenrePack
+
+
+def curated_keys(pack: GenrePack) -> dict[str, list[str]]:
+    """The metadata keys/values surfaced as dropdowns for this genre."""
+    return pack.metadata_keys
 
 
 def parse_set_arg(arg: str) -> tuple[str, str]:

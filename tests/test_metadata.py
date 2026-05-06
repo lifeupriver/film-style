@@ -2,7 +2,8 @@
 
 import pytest
 
-from film_style_analyzer.metadata import CURATED_KEYS, group_by, merge, parse_set_arg
+from film_style_analyzer import genre_pack
+from film_style_analyzer.metadata import curated_keys, group_by, merge, parse_set_arg
 
 
 def test_parse_set_arg_basic():
@@ -27,7 +28,15 @@ def test_merge_treats_empty_string_as_unset():
 
 def test_curated_keys_have_expected_dimensions():
     expected = {"venue", "season", "music_genre", "ceremony", "guest_count"}
-    assert expected.issubset(CURATED_KEYS.keys())
+    pack = genre_pack.load("wedding")
+    assert expected.issubset(curated_keys(pack).keys())
+
+
+def test_curated_keys_returns_pack_metadata():
+    pack = genre_pack.load("wedding")
+    keys = curated_keys(pack)
+    assert keys == pack.metadata_keys
+    assert "indoor" in keys["venue"]
 
 
 class _F:

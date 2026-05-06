@@ -11,6 +11,7 @@ from . import __version__
 from .chapters import group as group_chapters
 from .color_analysis import analyze_film_color
 from .dissolve_measure import measure_dissolves
+from .genre_pack import GenrePack
 from .media_probe import probe
 from .scene_detect import detect_clips
 from .schemas import ChapterRecord, Cuts, FilmAnalysis, Pacing, Structure, Transitions
@@ -57,8 +58,9 @@ def _decile_avgs(durations: list[float]) -> list[float]:
 def analyze_film(
     path: Path,
     thumbs_root: Path,
+    pack: GenrePack,
     audio_root: Path | None = None,
-    min_scene_length_sec: float = 0.5,
+    min_scene_length_sec: float | None = None,
     threshold: float | None = None,
     skip_audio: bool = False,
     skip_color: bool = False,
@@ -71,6 +73,10 @@ def analyze_film(
     gemini_model: str = "gemini-2.5-pro",
     cleanup_audio: bool = True,
 ) -> FilmAnalysis:
+    if min_scene_length_sec is None:
+        min_scene_length_sec = pack.min_scene_length_sec
+    if threshold is None:
+        threshold = pack.scene_detect_threshold
     meta = probe(path)
     clips = detect_clips(
         path,
