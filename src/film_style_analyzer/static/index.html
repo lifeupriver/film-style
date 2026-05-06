@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>The Atelier — film-style-analyzer</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght,SOFT@0,9..144,300..900,0..100;1,9..144,300..900,0..100&family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/css/main.css" />
+    <link
+      rel="icon"
+      href='data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="6" fill="%23C9974C"/><circle cx="16" cy="16" r="14" fill="none" stroke="%23C9974C" stroke-width="1"/></svg>'
+    />
+  </head>
+  <body>
+    <div class="grain" aria-hidden="true"></div>
+
+    <header class="masthead">
+      <a href="#/" class="masthead__brand" aria-label="Atelier home">
+        <span class="masthead__mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22">
+            <circle cx="12" cy="12" r="4" fill="currentColor" />
+            <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="0.8" />
+            <line x1="12" y1="0" x2="12" y2="2.5" stroke="currentColor" stroke-width="0.8" />
+            <line x1="12" y1="21.5" x2="12" y2="24" stroke="currentColor" stroke-width="0.8" />
+            <line x1="0" y1="12" x2="2.5" y2="12" stroke="currentColor" stroke-width="0.8" />
+            <line x1="21.5" y1="12" x2="24" y2="12" stroke="currentColor" stroke-width="0.8" />
+          </svg>
+        </span>
+        <span class="masthead__wordmark">
+          <span class="masthead__house" data-id="brand-name">The Atelier</span>
+          <span class="masthead__sub" data-id="brand-sub">Style Atelier · Wedding-Film Analysis</span>
+        </span>
+      </a>
+      <nav class="masthead__nav" aria-label="Primary">
+        <a data-route="/" href="#/">Archive</a>
+        <a data-route="/guide" href="#/guide">The Guide</a>
+        <a data-route="/compare" href="#/compare">Compare</a>
+        <a data-route="/settings" href="#/settings">Settings</a>
+        <button
+          class="density-toggle"
+          type="button"
+          data-id="density-toggle"
+          aria-label="Toggle density"
+          title="Toggle density (compact / spacious)"
+        >
+          <span data-density="spacious">⊟</span>
+          <span data-density="compact">⊟</span>
+        </button>
+      </nav>
+    </header>
+
+    <main id="app" aria-live="polite"></main>
+
+    <footer class="footer">
+      <span class="footer__rule"></span>
+      <span class="footer__motto">
+        Cut to the frame. Held to the breath. <em>Composed in dim rooms.</em>
+      </span>
+      <span class="footer__rule"></span>
+    </footer>
+
+    <template id="tpl-loading">
+      <section class="state state--loading">
+        <p class="state__kicker">Pulling reels from the vault</p>
+        <p class="state__title">One moment.</p>
+      </section>
+    </template>
+
+    <script type="module" src="/js/app.js"></script>
+  </body>
+</html>

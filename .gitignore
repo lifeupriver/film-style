@@ -1,0 +1,25 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.DS_Store
+
+# Editor / IDE
+.vscode/
+.idea/
+*.swp
+
+# Project-specific — never commit user data
+.film-style-analyzer/
+**/analyses/*.json
+**/thumbs/
+**/audio/*.wav
+*.fcpxml.predicted
+
+# Test fixtures with real footage
+tests/fixtures/*.mp4
+tests/fixtures/*.mov

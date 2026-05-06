@@ -1,0 +1,67 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "film-style-analyzer"
+version = "0.1.0"
+description = "Analyze finished wedding films and generate an editing style guide"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["video", "wedding-film", "editing", "style-transfer", "mcp", "claude", "gemini"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Video",
+]
+dependencies = [
+    "click>=8.1",
+    "rich>=13.0",
+    "anthropic>=0.40",
+    "pydantic>=2.0",
+    "scenedetect[opencv]>=0.6.7",
+]
+
+[project.optional-dependencies]
+audio = [
+    "whisperx>=3.3.0",
+    "inaSpeechSegmenter>=0.7",
+]
+gemini = [
+    "google-generativeai>=0.8",
+]
+music = [
+    "librosa>=0.10",
+]
+vimeo = [
+    "yt-dlp>=2024.5.0",
+]
+mcp = [
+    "mcp>=1.0",
+]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+film-style = "film_style_analyzer.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.setuptools.package-data]
+film_style_analyzer = [
+    "static/*.html",
+    "static/css/*.css",
+    "static/js/*.js",
+]
