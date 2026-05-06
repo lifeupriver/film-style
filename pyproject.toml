@@ -5,11 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "film-style-analyzer"
 version = "0.1.0"
-description = "Analyze finished wedding films and generate an editing style guide"
+description = "Analyze finished films across genres (wedding, commercial, brand content, social shorts, music videos, documentary) and generate per-genre editing style guides"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-keywords = ["video", "wedding-film", "editing", "style-transfer", "mcp", "claude", "gemini"]
+keywords = ["video", "editing", "style-transfer", "mcp", "claude", "gemini", "wedding-film", "commercial", "music-video", "documentary"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: End Users/Desktop",

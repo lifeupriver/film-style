@@ -26,6 +26,8 @@ src/film_style_analyzer/
 ├── color_analysis.py         # k-means palette + warmth + exposure + contrast
 ├── shot_size.py              # Claude vision per-clip composition labels
 ├── vision_classify.py        # Claude vision chapter scene types + few-shot loop
+├── genre_pack.py             # GenrePack dataclass + TOML loader
+├── genre_packs/              # shipped TOML packs (wedding, commercial, ...)
 │
 ├── media_probe.py            # ffprobe wrapper
 ├── audio_extract.py          # ffmpeg WAV extraction
@@ -47,6 +49,38 @@ src/film_style_analyzer/
 
 tests/                        # 100+ unit tests
 ```
+
+## Genre packs
+
+The pipeline math (scene detection, color analysis, audio classification,
+beat tracking, dissolve measurement) is genre-agnostic. The vocabulary,
+prompts, and tuned numeric defaults are not — they live in **genre
+packs** (TOML files in `src/film_style_analyzer/genre_packs/`).
+
+A `GenrePack` is loaded via `genre_pack.load(name)` and threaded as an
+explicit argument through `analyzer.analyze_film`, `vision_classify`,
+`shot_size`, `metadata.curated_keys`, `guide_writer.write_guide`,
+`gemini_analyzer.analyze`, `notebooklm_export.export_brief`, and the
+MCP server. The pack supplies:
+
+- **Scene labels** and **shot labels** for vision classification
+- **`insert_definition`** — what counts as an "insert" in this genre
+- **Curated metadata keys** for the dashboard's per-film tagging dropdowns
+- **`scene_detect_threshold`** and **`min_scene_length_sec`** — defaults
+  tuned to the genre's average cut density
+- **`audio_emphasis`** — one of `music_first`, `voiceover_first`,
+  `interview`, `beat_locked`, `hook_driven`. Branches the audio rules
+  in `profile_writer`
+- **`still_hold_relevant`** — gates the still-hold transition rule
+- **`prompts`** — a dict of prompt templates (guide writer system,
+  vision classifier system, Gemini film/YouTube prompts, MCP edit-in-style,
+  NotebookLM brief intro). Missing keys fall back to the wedding pack.
+
+Workspaces partition by genre: `~/.film-style-analyzer/<genre>/{analyses,
+thumbs, audio, style-profile.json, ...}`. Users author custom packs at
+`~/.film-style-analyzer/genre_packs/<name>.toml`; user packs override
+shipped packs of the same name. The active genre comes from
+`config.default_genre`.
 
 ## Data flow
 

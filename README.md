@@ -1,8 +1,12 @@
 # film-style-analyzer
 
-> Analyze a folder of finished wedding films (or any films you admire) and
-> produce a typed style profile that AI tools can consume to assemble new
-> edits in your style.
+> Analyze a folder of finished films and produce a typed, genre-aware style
+> profile that AI tools can consume to assemble new edits in your style.
+
+Works for any editorial genre — **wedding films, commercials, brand
+content, social shorts, music videos, documentaries** — via a pluggable
+"genre pack" abstraction that adapts vocabularies, prompts, and tuned
+numeric defaults to the genre you actually edit.
 
 A Python toolkit that watches your finished work, measures every dimension
 that defines an editor's style — pacing, cut rhythm, audio layering, color
@@ -16,8 +20,37 @@ grade, shot composition, music tempo — and emits two artifacts:
 
 A bundled web dashboard renders the corpus visually, and an MCP server
 exposes the whole pipeline to Claude Desktop so you can ask Claude to
-*"analyze these wedding films and tell me what's distinctive about this
+*"analyze these commercials and tell me what's distinctive about this
 editor's style"* in chat — and Claude actually does it.
+
+---
+
+## Genres
+
+Each shipped genre pack tunes vocabulary, prompts, and numeric defaults
+to the genre's editorial conventions. One genre per workspace —
+`~/.film-style-analyzer/<genre>/` keeps each corpus separate.
+
+| Pack | Threshold | Audio emphasis | Duration hint | Distinctive labels |
+|---|---|---|---|---|
+| `wedding` | 8.0 | music_first | 3–10 min | ceremony, first_dance, speeches, getting_ready |
+| `commercial` | 14.0 | voiceover_first | 6–120 s | hook, product_reveal, demo, cta, kicker |
+| `brand_content` | 10.0 | interview | 1–5 min | interview, b_roll, title_card, archival |
+| `social_short` | 16.0 | hook_driven | 7–90 s | hook, payoff, jump_cut, text_overlay, cta |
+| `music_video` | 12.0 | beat_locked | 2–6 min | performance, narrative, abstract, lipsync |
+| `documentary` | 7.0 | interview | 3–30 min | interview, b_roll, archival, vérité, recreation |
+
+```bash
+film-style genre list                # what packs are available
+film-style genre show commercial     # inspect a pack's contents
+film-style genre current             # which one is active
+film-style genre init my_custom      # scaffold a custom pack
+```
+
+Set the active genre by editing `~/.film-style-analyzer/config.json`'s
+`default_genre` field. User packs at `~/.film-style-analyzer/genre_packs/<name>.toml`
+override shipped packs of the same name. Existing wedding installs run
+`film-style migrate --to wedding` once to relocate legacy flat data.
 
 ---
 
