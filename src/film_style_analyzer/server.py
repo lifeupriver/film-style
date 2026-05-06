@@ -27,10 +27,20 @@ from .metadata import curated_keys, merge as merge_md
 from .schemas import FilmAnalysis
 
 DATA_ROOT = Path.home() / ".film-style-analyzer"
-ANALYSES_DIR = DATA_ROOT / "analyses"
-THUMBS_DIR = DATA_ROOT / "thumbs"
-GUIDE_PATH = DATA_ROOT / "style-guide.md"
-STATS_PATH = DATA_ROOT / "aggregate-stats.json"
+
+
+def _active_genre_at_import() -> str:
+    try:
+        return getattr(load_config(), "default_genre", "wedding")
+    except Exception:
+        return "wedding"
+
+
+_GENRE_ROOT = DATA_ROOT / _active_genre_at_import()
+ANALYSES_DIR = _GENRE_ROOT / "analyses"
+THUMBS_DIR = _GENRE_ROOT / "thumbs"
+GUIDE_PATH = _GENRE_ROOT / "style-guide.md"
+STATS_PATH = _GENRE_ROOT / "aggregate-stats.json"
 STATIC_DIR = Path(__file__).parent / "static"
 
 

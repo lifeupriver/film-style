@@ -24,12 +24,24 @@ from pathlib import Path
 from typing import Any
 
 DATA_ROOT = Path.home() / ".film-style-analyzer"
-ANALYSES_DIR = DATA_ROOT / "analyses"
-THUMBS_DIR = DATA_ROOT / "thumbs"
-AUDIO_DIR = DATA_ROOT / "audio"
-PROFILE_PATH = DATA_ROOT / "style-profile.json"
-GUIDE_PATH = DATA_ROOT / "style-guide.md"
-STATS_PATH = DATA_ROOT / "aggregate-stats.json"
+
+
+def _active_genre_at_import() -> str:
+    """Read the active genre from config at module load. Falls back to 'wedding'."""
+    try:
+        from .config import load as _load
+        return getattr(_load(), "default_genre", "wedding")
+    except Exception:
+        return "wedding"
+
+
+_GENRE_ROOT = DATA_ROOT / _active_genre_at_import()
+ANALYSES_DIR = _GENRE_ROOT / "analyses"
+THUMBS_DIR = _GENRE_ROOT / "thumbs"
+AUDIO_DIR = _GENRE_ROOT / "audio"
+PROFILE_PATH = _GENRE_ROOT / "style-profile.json"
+GUIDE_PATH = _GENRE_ROOT / "style-guide.md"
+STATS_PATH = _GENRE_ROOT / "aggregate-stats.json"
 
 SUPPORTED_VIDEO = {".mp4", ".mov", ".m4v", ".mkv"}
 
@@ -579,7 +591,7 @@ def tool_analyze_youtube_via_gemini(
         raise MCPServerError(str(e))
 
     if save_as_inspiration:
-        inspirations_path = DATA_ROOT / "inspirations.json"
+        inspirations_path = _GENRE_ROOT / "inspirations.json"
         existing = []
         if inspirations_path.is_file():
             try:
@@ -602,7 +614,7 @@ def tool_analyze_youtube_via_gemini(
 
 def tool_list_inspirations() -> dict[str, Any]:
     """List the YouTube inspirations saved by analyze_youtube_via_gemini."""
-    inspirations_path = DATA_ROOT / "inspirations.json"
+    inspirations_path = _GENRE_ROOT / "inspirations.json"
     if not inspirations_path.is_file():
         return {"count": 0, "inspirations": []}
     try:
@@ -654,7 +666,7 @@ def tool_export_for_notebooklm(
 
     inspirations: list[dict] | None = None
     if include_inspirations:
-        ins_path = DATA_ROOT / "inspirations.json"
+        ins_path = _GENRE_ROOT / "inspirations.json"
         if ins_path.is_file():
             try:
                 inspirations = json.loads(ins_path.read_text())
@@ -662,7 +674,7 @@ def tool_export_for_notebooklm(
                 inspirations = None
 
     target = Path(output_path).expanduser() if output_path else (
-        DATA_ROOT / "notebooklm-brief.md"
+        _GENRE_ROOT / "notebooklm-brief.md"
     )
     write_brief(
         films, profile, target, pack,

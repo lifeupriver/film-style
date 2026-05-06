@@ -22,12 +22,23 @@ from .genre_pack import load as load_genre_pack
 from .vision_classify import VisionError, classify_chapters, gather_existing_examples
 
 DATA_ROOT = Path.home() / ".film-style-analyzer"
-ANALYSES_DIR = DATA_ROOT / "analyses"
-THUMBS_DIR = DATA_ROOT / "thumbs"
-AUDIO_DIR = DATA_ROOT / "audio"
-DEFAULT_GUIDE = DATA_ROOT / "style-guide.md"
-DEFAULT_STATS = DATA_ROOT / "aggregate-stats.json"
-DEFAULT_PROFILE = DATA_ROOT / "style-profile.json"
+
+
+def _active_genre_at_import() -> str:
+    """Read the active genre from config at module load. Falls back to 'wedding'."""
+    try:
+        return getattr(load_config(), "default_genre", "wedding")
+    except Exception:
+        return "wedding"
+
+
+_GENRE_ROOT = DATA_ROOT / _active_genre_at_import()
+ANALYSES_DIR = _GENRE_ROOT / "analyses"
+THUMBS_DIR = _GENRE_ROOT / "thumbs"
+AUDIO_DIR = _GENRE_ROOT / "audio"
+DEFAULT_GUIDE = _GENRE_ROOT / "style-guide.md"
+DEFAULT_STATS = _GENRE_ROOT / "aggregate-stats.json"
+DEFAULT_PROFILE = _GENRE_ROOT / "style-profile.json"
 SUPPORTED = {".mp4", ".mov", ".m4v", ".mkv"}
 
 console = Console()
@@ -54,7 +65,13 @@ def _load_analyses() -> list[FilmAnalysis]:
 @click.group()
 @click.version_option(__version__)
 def cli() -> None:
-    """Analyze finished wedding films and generate an editing style guide."""
+    """Analyze finished films and generate per-genre editing style guides.
+
+    Supports wedding films, commercials, brand content, social shorts,
+    music videos, and documentaries. Run `film-style genre list` to see
+    available genre packs; `film-style genre current` shows the active
+    one.
+    """
 
 
 @cli.command()
@@ -594,7 +611,7 @@ def serve(host: str, port: int, no_browser: bool) -> None:
 
 @cli.command(name="export-notebooklm")
 @click.option("--output", "-o", type=click.Path(path_type=Path),
-              default=DATA_ROOT / "notebooklm-brief.md",
+              default=_GENRE_ROOT / "notebooklm-brief.md",
               show_default=True, help="Where to write the brief.")
 @click.option("--no-inspirations", is_flag=True,
               help="Omit saved YouTube inspirations.")
@@ -624,7 +641,7 @@ def export_notebooklm(output: Path, no_inspirations: bool) -> None:
 
     inspirations = None
     if not no_inspirations:
-        ins_path = DATA_ROOT / "inspirations.json"
+        ins_path = _GENRE_ROOT / "inspirations.json"
         if ins_path.is_file():
             try:
                 inspirations = json.loads(ins_path.read_text())
