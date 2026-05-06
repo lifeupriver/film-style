@@ -1,7 +1,7 @@
 """Classify chapter scene types via Claude vision.
 
-Sends one representative thumbnail per chapter and asks Claude to label each as
-a wedding scene type. Returns label list in chapter order.
+Sends one representative thumbnail per chapter and asks Claude to label each
+chapter according to the active genre pack's scene-label vocabulary.
 """
 
 from __future__ import annotations
@@ -11,23 +11,13 @@ import json
 import os
 from pathlib import Path
 
-SCENE_LABELS = [
-    "getting_ready", "details", "first_look", "portraits", "ceremony",
-    "ceremony_processional", "ceremony_vows", "ceremony_recessional",
-    "cocktail_hour", "reception_entrance", "first_dance",
-    "speeches", "toasts", "cake_cutting", "dancing", "send_off",
-    "establishing", "transition", "other",
-]
+from .genre_pack import GenrePack
 
-SYSTEM = (
-    "You are labeling shots from a finished wedding film. Each image is the "
-    "middle frame of one chapter of the film. Label each chapter with exactly "
-    "one of these scene types:\n"
-    + ", ".join(SCENE_LABELS)
-    + ".\n\nReturn JSON: {\"labels\": [\"label1\", \"label2\", ...]} with one "
-    "label per image in the order presented. Be precise. Use 'other' only if "
-    "nothing else fits."
-)
+
+def build_chapter_system_prompt(pack: GenrePack) -> str:
+    """Render the chapter-classification system prompt for the given pack."""
+    template = pack.prompts["chapter_classify_system"]
+    return template.format(scene_labels=", ".join(pack.scene_labels))
 
 
 class VisionError(RuntimeError):
@@ -44,6 +34,7 @@ def _encode(path: Path) -> dict:
 
 def classify_chapters(
     thumbnail_paths: list[Path],
+    pack: GenrePack,
     model: str = "claude-sonnet-4-20250514",
     examples: list[tuple[Path, str]] | None = None,
     max_examples: int = 6,
@@ -63,6 +54,8 @@ def classify_chapters(
         raise VisionError("anthropic SDK not installed") from e
 
     client = Anthropic(api_key=api_key)
+    system_prompt = build_chapter_system_prompt(pack)
+    valid_labels = set(pack.scene_labels)
 
     # Build the few-shot prelude messages, if examples were provided.
     example_msgs: list[dict] = []
@@ -108,7 +101,7 @@ def classify_chapters(
             msg = client.messages.create(
                 model=model,
                 max_tokens=1024,
-                system=SYSTEM,
+                system=system_prompt,
                 messages=[
                     *example_msgs,
                     {"role": "user", "content": content},
@@ -126,7 +119,7 @@ def classify_chapters(
             batch_labels.append("other")
         labels.extend(batch_labels[:len(batch)])
 
-    return [l if l in SCENE_LABELS else "other" for l in labels]
+    return [l if l in valid_labels else "other" for l in labels]
 
 
 def _pick_diverse_examples(
@@ -138,7 +131,6 @@ def _pick_diverse_examples(
         by_label.setdefault(label, []).append((path, label))
 
     chosen: list[tuple[Path, str]] = []
-    # Round-robin one example per label until we hit the cap.
     label_iters = {k: iter(v) for k, v in by_label.items()}
     while len(chosen) < max_examples and label_iters:
         for label in list(label_iters):

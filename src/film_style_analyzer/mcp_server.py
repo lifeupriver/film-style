@@ -360,6 +360,9 @@ def tool_generate_guide(
 
     notes: list[str] = []
 
+    from .genre_pack import load as load_genre_pack
+    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
+
     if vision:
         from .vision_classify import VisionError, classify_chapters, gather_existing_examples
         examples = gather_existing_examples(ANALYSES_DIR, DATA_ROOT)
@@ -371,6 +374,7 @@ def tool_generate_guide(
             try:
                 labels = classify_chapters(
                     [DATA_ROOT / c.representative_thumbnail for c in unlabeled],
+                    pack,
                     model=cfg.anthropic_model,
                     examples=examples,
                 )
@@ -391,6 +395,7 @@ def tool_generate_guide(
             try:
                 labels = classify_shots(
                     [DATA_ROOT / c.thumbnail for c in unlabeled],
+                    pack,
                     model=cfg.anthropic_model,
                 )
                 for clip, lbl in zip(unlabeled, labels):

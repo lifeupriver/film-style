@@ -2,7 +2,10 @@
 
 Sends batched per-clip middle-frame thumbnails to Claude and gets back a label
 per image. Tighter label set than chapter classification — these answer
-'what kind of shot is this?' (composition), not 'what part of the wedding'.
+'what kind of shot is this?' (composition), not 'what part of the film'.
+
+Shot taxonomy is genre-agnostic (extreme_wide ... aerial), but the prompt's
+framing and 'insert' definition come from the active genre pack.
 """
 
 from __future__ import annotations
@@ -12,39 +15,24 @@ import json
 import os
 from pathlib import Path
 
+from .genre_pack import GenrePack
+
+# Canonical shot-size taxonomy. All shipped genre packs use this same list,
+# so the matchmaker (and similar consumers) can rely on it as a stable
+# feature-vector dimension set.
 SHOT_LABELS = [
-    "extreme_wide",     # establishing, landscape, environment
-    "wide",             # full body, full venue
-    "medium_wide",      # waist-up, two-shot
-    "medium",           # mid-thigh up
-    "medium_close",     # chest up
-    "close_up",         # head + shoulders
-    "extreme_close",    # eyes, hands, ring detail
-    "insert",           # detail of an object: rings, glassware, paper
-    "over_shoulder",    # OTS framing
-    "aerial",           # drone / overhead
-    "other",
+    "extreme_wide", "wide", "medium_wide", "medium", "medium_close",
+    "close_up", "extreme_close", "insert", "over_shoulder", "aerial", "other",
 ]
 
-SYSTEM = (
-    "You are labeling shots from a wedding film by composition. Each image is "
-    "the middle frame of one shot. For each image, output exactly one of:\n"
-    + ", ".join(SHOT_LABELS)
-    + ".\n\n"
-    "Definitions:\n"
-    "- extreme_wide: landscape / venue exterior with subjects tiny or absent.\n"
-    "- wide: full body of subject(s), context dominates.\n"
-    "- medium_wide: waist-up framing, two-shot, conversational distance.\n"
-    "- medium: mid-thigh up.\n"
-    "- medium_close: chest up.\n"
-    "- close_up: head and shoulders.\n"
-    "- extreme_close: face only / eyes / hands / ring.\n"
-    "- insert: a detail of an object, no subject in frame (rings on a book, place card).\n"
-    "- over_shoulder: shot framed past the back of someone's head/shoulder.\n"
-    "- aerial: from above (drone, overhead).\n"
-    "- other: cannot tell.\n\n"
-    'Return JSON: {"labels": ["label1", "label2", ...]} in image order.'
-)
+
+def build_shot_system_prompt(pack: GenrePack) -> str:
+    """Render the shot-classification system prompt for the given pack."""
+    template = pack.prompts["shot_classify_system"]
+    return template.format(
+        shot_labels=", ".join(pack.shot_labels),
+        insert_definition=pack.insert_definition,
+    )
 
 
 class ShotSizeError(RuntimeError):
@@ -64,6 +52,7 @@ def _encode_image(path: Path) -> dict:
 
 def classify_shots(
     thumbnail_paths: list[Path],
+    pack: GenrePack,
     model: str = "claude-sonnet-4-20250514",
     batch_size: int = 16,
 ) -> list[str]:
@@ -80,6 +69,8 @@ def classify_shots(
         raise ShotSizeError("anthropic SDK not installed") from e
 
     client = Anthropic(api_key=api_key)
+    system_prompt = build_shot_system_prompt(pack)
+    valid_labels = set(pack.shot_labels)
     out: list[str] = []
 
     for start in range(0, len(thumbnail_paths), batch_size):
@@ -96,7 +87,7 @@ def classify_shots(
             msg = client.messages.create(
                 model=model,
                 max_tokens=1024,
-                system=SYSTEM,
+                system=system_prompt,
                 messages=[{"role": "user", "content": content}],
             )
         except Exception as e:
@@ -109,11 +100,10 @@ def classify_shots(
         except (json.JSONDecodeError, ValueError):
             labels = []
 
-        # Pad / truncate to match batch.
         while len(labels) < len(batch):
             labels.append("other")
         labels = labels[: len(batch)]
-        out.extend(l if l in SHOT_LABELS else "other" for l in labels)
+        out.extend(l if l in valid_labels else "other" for l in labels)
 
     return out
 

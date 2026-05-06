@@ -18,6 +18,7 @@ from .fcpxml_parser import parse as parse_fcpxml
 from .guide_writer import write_guide
 from .profile_writer import build_profile
 from .schemas import FilmAnalysis
+from .genre_pack import load as load_genre_pack
 from .vision_classify import VisionError, classify_chapters, gather_existing_examples
 
 DATA_ROOT = Path.home() / ".film-style-analyzer"
@@ -167,6 +168,7 @@ def guide(output: Path, profile_output: Path, model: str | None,
     if not analyses:
         raise click.ClickException("no analyses found — run `film-style analyze <path>` first")
 
+    pack = load_genre_pack(cfg.default_genre if hasattr(cfg, "default_genre") else "wedding")
     if vision:
         console.print("[bold]Vision pass[/bold] — classifying chapter scene types…")
         # Gather already-labeled chapters across the archive as few-shot examples.
@@ -179,7 +181,7 @@ def guide(output: Path, profile_output: Path, model: str | None,
                 continue
             thumb_paths = [DATA_ROOT / c.representative_thumbnail for c in unlabeled]
             try:
-                labels = classify_chapters(thumb_paths, model=model, examples=examples)
+                labels = classify_chapters(thumb_paths, pack, model=model, examples=examples)
             except VisionError as e:
                 console.print(f"[yellow]vision skip[/yellow] {a.film.filename}: {e}")
                 continue
@@ -199,7 +201,7 @@ def guide(output: Path, profile_output: Path, model: str | None,
                 continue
             thumb_paths = [DATA_ROOT / c.thumbnail for c in unlabeled]
             try:
-                labels = classify_shots(thumb_paths, model=model)
+                labels = classify_shots(thumb_paths, pack, model=model)
             except ShotSizeError as e:
                 console.print(f"[yellow]shot-size skip[/yellow] {a.film.filename}: {e}")
                 continue
