@@ -221,7 +221,7 @@ def guide(output: Path, profile_output: Path, model: str | None,
 
     # Write the structured JSON profile FIRST — that artifact is what
     # downstream AI tools consume, and it's deterministic (no API call).
-    profile = build_profile(analyses, stats)
+    profile = build_profile(analyses, stats, pack=pack)
     profile_output.parent.mkdir(parents=True, exist_ok=True)
     profile_output.write_text(json.dumps(profile, indent=2, default=str))
     console.print(f"[green]wrote[/green] {profile_output} ({len(profile.get('rules', []))} rules)")

@@ -2,8 +2,11 @@
 
 from datetime import datetime, timezone
 
+from film_style_analyzer import genre_pack
 from film_style_analyzer.aggregator import aggregate
 from film_style_analyzer.profile_writer import build_profile
+
+PACK = genre_pack.load("wedding")
 from film_style_analyzer.schemas import (
     ChapterRecord, Clip, Cuts, FilmAnalysis, FilmMeta, Pacing, Structure, Transitions,
 )
@@ -51,7 +54,7 @@ def _mk(filename, dur, clip_specs, *, color=None, music=None, audio=None,
 def test_profile_includes_pacing_rules():
     f = _mk("a.mp4", 360, [(0, 3, "hard_cut"), (3, 6, "hard_cut"),
                             (6, 9, "hard_cut"), (9, 12, "hard_cut")])
-    profile = build_profile([f], aggregate([f]))
+    profile = build_profile([f], aggregate([f]), pack=PACK)
     assert profile["film_count"] == 1
     assert profile["pacing"]["target_avg_clip_sec"] is not None
     # Should produce at least one rule.
@@ -65,7 +68,7 @@ def test_profile_with_color_emits_grade_rule():
              "tone_label": "mid-key · warm",
              "dominant_palette": [{"hex": "#aa6622", "weight": 0.4}]}
     f = _mk("a.mp4", 360, [(0, 3, "hard_cut"), (3, 6, "hard_cut")], color=color)
-    profile = build_profile([f], aggregate([f]))
+    profile = build_profile([f], aggregate([f]), pack=PACK)
     assert profile["color"]["present"] is True
     assert profile["color"]["mean_warm_cool"] == 0.35
     assert any("warm" in r.lower() for r in profile["rules"])
@@ -75,7 +78,7 @@ def test_profile_with_music_emits_tempo_range():
     music = {"has_music": True, "tempo_bpm": 105.0, "key": "G",
              "beats": [], "energy_curve_per_sec": []}
     f = _mk("a.mp4", 360, [(0, 3, "hard_cut")], music=music)
-    profile = build_profile([f], aggregate([f]))
+    profile = build_profile([f], aggregate([f]), pack=PACK)
     assert profile["music"]["present"] is True
     assert profile["music"]["target_tempo_range_bpm"] == [105.0, 105.0]
     assert any("BPM" in r for r in profile["rules"])
@@ -85,7 +88,7 @@ def test_profile_with_shot_sizes_emits_mix_rule():
     f = _mk("a.mp4", 360,
             [(0, 3, "hard_cut"), (3, 6, "hard_cut"), (6, 9, "hard_cut"), (9, 12, "hard_cut")],
             shot_sizes=["wide", "medium", "close_up", "wide"])
-    profile = build_profile([f], aggregate([f]))
+    profile = build_profile([f], aggregate([f]), pack=PACK)
     assert profile["shot_mix"]["labeled_clips"] == 4
     assert profile["shot_mix"]["dominant"] == "wide"
     assert any("shot mix" in r.lower() for r in profile["rules"])
@@ -101,7 +104,7 @@ def test_profile_with_scene_breakdown():
     f = _mk("a.mp4", 20,
             [(0, 10, "hard_cut"), (10, 12, "hard_cut")],
             chapters=chapters)
-    profile = build_profile([f], aggregate([f]))
+    profile = build_profile([f], aggregate([f]), pack=PACK)
     assert "ceremony" in profile["scenes"]
     assert "dancing" in profile["scenes"]
     # Pacing-by-scene rule should appear.
@@ -109,6 +112,6 @@ def test_profile_with_scene_breakdown():
 
 
 def test_profile_empty():
-    profile = build_profile([], {})
+    profile = build_profile([], {}, pack=PACK)
     assert profile["film_count"] == 0
     assert profile["rules"] == []

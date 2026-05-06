@@ -412,7 +412,7 @@ def tool_generate_guide(
     if not include_gemini:
         stats = {**stats, "gemini_analyses": []}
 
-    profile = build_profile(analyses, stats)
+    profile = build_profile(analyses, stats, pack=pack)
     PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
     PROFILE_PATH.write_text(json.dumps(profile, indent=2, default=str))
     STATS_PATH.write_text(json.dumps(stats, indent=2, default=str))

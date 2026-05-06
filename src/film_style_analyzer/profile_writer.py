@@ -20,16 +20,24 @@ from dataclasses import asdict
 from typing import Any
 
 from . import __version__
+from .genre_pack import GenrePack
 from .schemas import FilmAnalysis
 
 
-def build_profile(films: list[FilmAnalysis], aggregated: dict) -> dict[str, Any]:
+def build_profile(
+    films: list[FilmAnalysis],
+    aggregated: dict,
+    pack: GenrePack,
+) -> dict[str, Any]:
     if not films:
         return {
             "schema_version": "1.0",
             "generator_version": __version__,
             "film_count": 0,
             "rules": [],
+            "genre": pack.name,
+            "genre_display_name": pack.display_name,
+            "genre_extensions": {},
         }
 
     rules: list[str] = []
@@ -87,7 +95,7 @@ def build_profile(films: list[FilmAnalysis], aggregated: dict) -> dict[str, Any]
             f"{transitions.get('dissolve_pct', 0):.0f}% dissolves "
             f"(~{transitions.get('avg_dissolves_per_film', 0):.0f} per film)",
         ]
-        if transitions.get("still_hold_pct"):
+        if pack.still_hold_relevant and transitions.get("still_hold_pct"):
             parts.append(
                 f"{transitions['still_hold_pct']:.0f}% still-holds "
                 f"(boundaries between motion video and held photographs, "
@@ -108,17 +116,43 @@ def build_profile(films: list[FilmAnalysis], aggregated: dict) -> dict[str, Any]
             "avg_speech_segment_sec_target": audio.get("avg_speech_segment_sec"),
             "longest_speech_segment_sec_target": audio.get("longest_speech_segment_sec_avg"),
         })
-        if audio.get("first_speech_at_pct_avg") is not None:
+        first_pct = audio.get("first_speech_at_pct_avg")
+        first_sec = audio.get("first_speech_at_sec_avg") or 0
+        speech_over = audio.get("speech_over_music_pct_avg")
+        if pack.audio_emphasis == "music_first":
+            if first_pct is not None:
+                rules.append(
+                    f"Hold music alone before any speech for the first "
+                    f"{first_pct:.0f}% of the film (~{first_sec:.0f}s)."
+                )
+            if speech_over:
+                rules.append(
+                    f"Layer speech over music for ~{speech_over:.0f}% of total "
+                    f"runtime; speech rarely plays without music underneath."
+                )
+        elif pack.audio_emphasis == "voiceover_first":
+            if first_pct is not None:
+                rules.append(
+                    f"Voiceover/dialogue starts within the first "
+                    f"{first_pct:.0f}% of runtime (~{first_sec:.1f}s) — lead "
+                    f"with the message, not with mood."
+                )
+        elif pack.audio_emphasis == "interview":
+            if speech_over:
+                rules.append(
+                    f"Interview/dialogue covers ~{speech_over:.0f}% of "
+                    f"runtime; cut to b-roll under speech, not over silence."
+                )
+        elif pack.audio_emphasis == "beat_locked":
             rules.append(
-                f"Hold music alone before any speech for the first "
-                f"{audio['first_speech_at_pct_avg']:.0f}% of the film "
-                f"(~{(audio.get('first_speech_at_sec_avg') or 0):.0f}s)."
+                "Lock cuts to the music beat — see music block for tempo target."
             )
-        if audio.get("speech_over_music_pct_avg"):
-            rules.append(
-                f"Layer speech over music for ~{audio['speech_over_music_pct_avg']:.0f}% "
-                f"of total runtime; speech rarely plays without music underneath."
-            )
+        elif pack.audio_emphasis == "hook_driven":
+            if first_sec is not None:
+                rules.append(
+                    f"Open with a hook in the first 3 seconds; first speech "
+                    f"lands at ~{first_sec:.1f}s."
+                )
 
     if transcript:
         audio_block["transcript_avg_total_words"] = transcript.get("avg_total_words")
@@ -237,6 +271,9 @@ def build_profile(films: list[FilmAnalysis], aggregated: dict) -> dict[str, Any]
         "schema_version": "1.0",
         "generator_version": __version__,
         "film_count": len(films),
+        "genre": pack.name,
+        "genre_display_name": pack.display_name,
+        "genre_extensions": {},
         "duration": duration_block,
         "clip_counts": cuts_block,
         "pacing": pacing_block,
