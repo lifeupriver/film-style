@@ -1,0 +1,125 @@
+name = "wedding"
+display_name = "wedding film"
+scene_detect_threshold = 8.0
+min_scene_length_sec = 0.5
+audio_emphasis = "music_first"
+still_hold_relevant = true
+duration_range_hint_sec = [180.0, 600.0]
+
+scene_labels = [
+    "getting_ready", "details", "first_look", "portraits", "ceremony",
+    "ceremony_processional", "ceremony_vows", "ceremony_recessional",
+    "cocktail_hour", "reception_entrance", "first_dance",
+    "speeches", "toasts", "cake_cutting", "dancing", "send_off",
+    "establishing", "transition", "other",
+]
+
+shot_labels = [
+    "extreme_wide", "wide", "medium_wide", "medium", "medium_close",
+    "close_up", "extreme_close", "insert", "over_shoulder", "aerial", "other",
+]
+
+insert_definition = "a detail of an object, no subject in frame (rings on a book, place card, paper details, glassware)"
+
+[metadata_keys]
+venue = ["indoor", "outdoor", "destination", "church", "barn", "estate", "beach", "garden", "ballroom"]
+season = ["spring", "summer", "autumn", "winter"]
+time_of_day = ["morning", "afternoon", "golden_hour", "evening", "night"]
+ceremony = ["religious", "civil", "spiritual", "elopement", "vow_renewal"]
+guest_count = ["intimate", "small", "medium", "large", "huge"]
+music_genre = ["acoustic", "indie", "folk", "pop", "classical", "instrumental", "jazz", "electronic", "soul"]
+weather = ["sunny", "overcast", "rainy", "snowy", "stormy"]
+duration_target = ["short", "standard", "long"]
+
+[prompts]
+guide_writer_system = """You are helping a wedding filmmaker document their editing style.
+You will receive detailed statistical analysis of their finished wedding films.
+Write a comprehensive editing style guide in markdown that a junior editor (or an
+AI rough cut assembler) could follow to produce edits that match this filmmaker's
+style.
+
+Be extremely specific. Use exact numbers from the data. Do not generalize when
+you can be precise. Write rules, not descriptions. For example: "Ceremony clips:
+4.8 seconds average, never exceed 7 seconds" is better than "ceremony clips tend
+to be a bit longer."
+
+The guide should be structured as actionable rules for assembling a rough cut,
+not as a description of the filmmaker's work.
+
+If the data includes a `scene_breakdown` array (per-scene-type statistics from
+vision classification), produce a per-scene rules table. If it includes
+`audio` and `transcript`, produce explicit audio-design rules. If it includes
+`gemini_analyses`, treat them as qualitative observations and weave specific
+distinctive choices into the guide.
+
+Do not use the words: stunning, magical, seamless, breathtaking, cinematic,
+captivating, mesmerizing, or any similar filler."""
+
+chapter_classify_system = """You are labeling shots from a finished wedding film. Each image is the middle frame of one chapter of the film. Label each chapter with exactly one of these scene types:
+{scene_labels}
+
+Return JSON: {{"labels": ["label1", "label2", ...]}} with one label per image in the order presented. Be precise. Use 'other' only if nothing else fits."""
+
+shot_classify_system = """You are labeling shots from a wedding film by composition. Each image is the middle frame of one shot. For each image, output exactly one of:
+{shot_labels}
+
+Definitions:
+- extreme_wide: landscape / venue exterior with subjects tiny or absent.
+- wide: full body of subject(s), context dominates.
+- medium_wide: waist-up framing, two-shot, conversational distance.
+- medium: mid-thigh up.
+- medium_close: chest up.
+- close_up: head and shoulders.
+- extreme_close: face only / eyes / hands / ring.
+- insert: {insert_definition}.
+- over_shoulder: shot framed past the back of someone's head/shoulder.
+- aerial: from above (drone, overhead).
+- other: cannot tell.
+
+Return JSON: {{"labels": ["label1", "label2", ...]}} in image order."""
+
+gemini_film_prompt = """You are analyzing a finished wedding film to extract the editor's style.
+This film is {duration} long with {cuts} cuts.
+
+Analyze the film and answer these questions precisely:
+
+1. OPENING: Describe the first 30 seconds. What is the first shot? How many establishing shots before the first "story" shot? When does the music start? When does the first cut happen?
+
+2. SCENE FLOW: List every scene transition you observe. What visual or audio cue marks each transition? Are scenes strictly chronological or does the editor intercut between parallel timelines?
+
+3. AUDIO DESIGN: When does ceremony/speech audio first appear? Over what visuals is it placed? How long do speech excerpts run? Does the music ever fully cut out or always play underneath?
+
+4. PACING FEEL: Where does the edit feel slow and lingering vs. fast and energetic? Is there a build? Where is the emotional peak?
+
+5. SHOT SELECTION: Does the editor favor wide shots, close-ups, or a specific mix? Do you see a pattern in how shot sizes alternate?
+
+6. CLOSING: Describe the final 30 seconds. How does the film end? What is the last shot? Is there a fade? How long does the final shot hold?
+
+7. DISTINCTIVE CHOICES: What 3 things make this editor's style recognizable? What would you notice if you watched 10 of their films?
+
+Respond in structured JSON with one top-level key per question:
+{{"opening": ..., "scene_flow": ..., "audio_design": ..., "pacing_feel": ..., "shot_selection": ..., "closing": ..., "distinctive_choices": [...]}}"""
+
+gemini_youtube_prompt = """You are analyzing a wedding film (or a film whose editing style might inspire wedding-film editing) on YouTube.
+
+Answer these questions precisely:
+
+1. PACING: How does the editor handle pacing? Is it fast or slow? Does it build, plateau, or release? Where does it accelerate?
+
+2. SHOT SELECTION: What kinds of shots dominate (wide/medium/close-up, handheld/locked, drone)? Is there a pattern in how shot sizes alternate?
+
+3. AUDIO DESIGN: When does music play? When does speech enter? Does music continue under speech or drop out? Are ambient sounds featured?
+
+4. COLOR / GRADE: What's the dominant tonal approach (warm/cool, low-key/high-key, saturated/desaturated)? Any signature looks (e.g., milky shadows, crushed blacks, lifted contrast)?
+
+5. STRUCTURE: How does the film open and close? What's the narrative arc?
+
+6. DISTINCTIVE CHOICES: Three things that make this editor's style recognizable. What would you notice if you watched 10 of their films?
+
+7. RELEVANCE: How might this style translate to wedding-film editing? What would be a clear and specific takeaway for the user's edits?
+
+Respond in structured JSON with one top-level key per question: opening, pacing, shot_selection, audio_design, color_grade, structure, distinctive_choices (array), relevance."""
+
+mcp_edit_in_style = """You are assembling a rough cut in {brand_name}'s wedding-film style. Use the loaded style profile and guide as your reference; cite specific rules when you make a cut decision."""
+
+notebooklm_brief_intro = """This brief summarizes the editing style of {brand_name}, derived from {n} analyzed wedding films. Use it as a reference when discussing edit choices, planning new films, or training assistants on this style."""

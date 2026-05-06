@@ -64,4 +64,5 @@ film_style_analyzer = [
     "static/*.html",
     "static/css/*.css",
     "static/js/*.js",
+    "genre_packs/*.toml",
 ]
