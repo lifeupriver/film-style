@@ -23,3 +23,4 @@ dist/
 # Test fixtures with real footage
 tests/fixtures/*.mp4
 tests/fixtures/*.mov
+.claude/
