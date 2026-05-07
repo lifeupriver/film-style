@@ -130,6 +130,33 @@ film-style match sarah-and-mike
 film-style export-notebooklm
 ```
 
+### Use your Claude Pro/Max subscription instead of API tokens
+
+Two paths route LLM work through your subscription quota instead of an
+`ANTHROPIC_API_KEY`:
+
+**Text-only work (the markdown style guide):** set `claude_backend = "cli"`
+in `~/.film-style-analyzer/config.json` and the guide writer shells out to
+the local `claude` Code CLI:
+
+```json
+{ "claude_backend": "cli" }
+```
+
+Requires `claude` on `$PATH` and `claude auth login` once.
+
+**Vision work (chapter labels, shot sizes):** the local CLI is text-only,
+so vision passes happen via Claude Desktop + the MCP server. Run
+`film-style mcp-serve` (or wire the server into Claude Desktop's
+`claude_desktop_config.json`), then in chat ask:
+
+> "Label all unlabeled chapters in my Amanda_and_Kenton film."
+
+Claude calls `get_chapter_thumbnails_to_label`, looks at each thumbnail,
+and writes labels back via `set_chapter_labels_bulk`. Same flow for
+`get_clip_thumbnails_to_label_shots` + `set_shot_sizes_bulk` and
+`set_film_metadata`. No API tokens consumed.
+
 ---
 
 ## All commands
