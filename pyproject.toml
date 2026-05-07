@@ -46,6 +46,12 @@ vimeo = [
 mcp = [
     "mcp>=1.0",
 ]
+shots = [
+    "mediapipe>=0.10",
+    "opencv-python>=4.8",
+    "numpy>=1.24",
+    "deepface>=0.0.93",
+]
 dev = [
     "pytest>=7.0",
 ]
