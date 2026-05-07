@@ -44,6 +44,7 @@ THUMBS_DIR = _GENRE_ROOT / "thumbs"
 GUIDE_PATH = _GENRE_ROOT / "style-guide.md"
 STATS_PATH = _GENRE_ROOT / "aggregate-stats.json"
 EDIT_CRAFT_DIR = _GENRE_ROOT / "edit-craft"
+SHOT_PROFILE_PATH = DATA_ROOT / "shot-profile.json"
 STATIC_DIR = Path(__file__).parent / "static"
 
 
@@ -267,6 +268,21 @@ def _make_handler():
                     )
                 return self._send_json(
                     {"exists": True, "markdown": GUIDE_PATH.read_text()}
+                )
+
+            if path == "/api/shot-profile":
+                if not SHOT_PROFILE_PATH.is_file():
+                    return self._send_json(
+                        {"exists": False, "path": str(SHOT_PROFILE_PATH),
+                         "profile": None}
+                    )
+                try:
+                    profile = json.loads(SHOT_PROFILE_PATH.read_text())
+                except (OSError, json.JSONDecodeError):
+                    return self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
+                return self._send_json(
+                    {"exists": True, "path": str(SHOT_PROFILE_PATH),
+                     "profile": profile}
                 )
 
             if path == "/api/edit-craft":

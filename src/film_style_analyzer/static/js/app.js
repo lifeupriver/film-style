@@ -6,6 +6,7 @@ import {
   renderFilm,
   renderGuide,
   renderCraft,
+  renderShotProfile,
   renderCompareIntro,
   renderCompareResult,
   renderSettings,
@@ -60,6 +61,7 @@ const ROUTES = [
   { test: /^\/?$/, name: "/", render: viewCorpus },
   { test: /^\/film\/(.+)$/, name: "/film", render: viewFilm },
   { test: /^\/guide\/?$/, name: "/guide", render: viewGuide },
+  { test: /^\/shot-profile\/?$/, name: "/shot-profile", render: viewShotProfile },
   { test: /^\/craft(?:\/.*)?$/, name: "/craft", render: viewCraft },
   { test: /^\/compare\/?$/, name: "/compare", render: viewCompare },
   { test: /^\/settings\/?$/, name: "/settings", render: viewSettings },
@@ -169,6 +171,14 @@ async function viewCraft() {
     files: [],
   }));
   return renderCraft(payload);
+}
+
+async function viewShotProfile() {
+  const payload = await api("/api/shot-profile").catch(() => ({
+    exists: false,
+    profile: null,
+  }));
+  return renderShotProfile(payload);
 }
 
 async function viewCompare() {
