@@ -6,6 +6,7 @@ API over the data the CLI writes to ~/.film-style-analyzer/.
 
 from __future__ import annotations
 
+import io
 import json
 import mimetypes
 import re
@@ -13,6 +14,7 @@ import socketserver
 import tempfile
 import threading
 import webbrowser
+import zipfile
 from dataclasses import asdict
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler
@@ -41,6 +43,7 @@ ANALYSES_DIR = _GENRE_ROOT / "analyses"
 THUMBS_DIR = _GENRE_ROOT / "thumbs"
 GUIDE_PATH = _GENRE_ROOT / "style-guide.md"
 STATS_PATH = _GENRE_ROOT / "aggregate-stats.json"
+EDIT_CRAFT_DIR = _GENRE_ROOT / "edit-craft"
 STATIC_DIR = Path(__file__).parent / "static"
 
 
@@ -88,6 +91,86 @@ def _film_summary(a: FilmAnalysis) -> dict:
         "cover_thumbnail": cover,
         "analyzed_at": a.analyzed_at.isoformat() if a.analyzed_at else None,
     }
+
+
+def _resolve_under(base: Path, rel: str) -> Path | None:
+    """Resolve `rel` under `base`, returning None if it escapes the base
+    directory. `rel` may use forward slashes."""
+    if not rel or rel.startswith("/"):
+        return None
+    if "\x00" in rel:
+        return None
+    target = (base / rel).resolve()
+    try:
+        target.relative_to(base.resolve())
+    except ValueError:
+        return None
+    return target
+
+
+_CRAFT_TYPES = {
+    ".md": "text/markdown; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+    ".txt": "text/plain; charset=utf-8",
+}
+
+
+def _craft_content_type(path: Path) -> str:
+    return _CRAFT_TYPES.get(
+        path.suffix.lower(),
+        mimetypes.guess_type(str(path))[0] or "application/octet-stream",
+    )
+
+
+def _edit_craft_index() -> dict:
+    """Build a JSON index of every file under EDIT_CRAFT_DIR.
+
+    Returns:
+        {
+            "exists": bool,
+            "root": str,
+            "files": [
+                {"path": "scenes/dancing.md", "size": 33000, "type": "md"},
+                ...
+            ],
+            "tree": {"scenes": {"dancing.md": {...}, ...}, ...}
+        }
+    """
+    if not EDIT_CRAFT_DIR.is_dir():
+        return {"exists": False, "root": str(EDIT_CRAFT_DIR), "files": [], "tree": {}}
+    files: list[dict] = []
+    tree: dict = {}
+    for p in sorted(EDIT_CRAFT_DIR.rglob("*")):
+        if not p.is_file():
+            continue
+        rel = p.relative_to(EDIT_CRAFT_DIR).as_posix()
+        entry = {
+            "path": rel,
+            "size": p.stat().st_size,
+            "type": p.suffix.lstrip(".").lower() or "file",
+        }
+        files.append(entry)
+        # Build nested tree
+        parts = rel.split("/")
+        cur = tree
+        for part in parts[:-1]:
+            cur = cur.setdefault(part, {})
+        cur[parts[-1]] = entry
+    return {
+        "exists": True,
+        "root": str(EDIT_CRAFT_DIR),
+        "files": files,
+        "tree": tree,
+    }
+
+
+def _zip_directory(d: Path) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        for p in sorted(d.rglob("*")):
+            if p.is_file():
+                zf.write(p, arcname=p.relative_to(d).as_posix())
+    return buf.getvalue()
 
 
 def _slug_safe(name: str) -> bool:
@@ -185,6 +268,48 @@ def _make_handler():
                 return self._send_json(
                     {"exists": True, "markdown": GUIDE_PATH.read_text()}
                 )
+
+            if path == "/api/edit-craft":
+                return self._send_json(_edit_craft_index())
+
+            if path == "/api/edit-craft.zip":
+                if not EDIT_CRAFT_DIR.is_dir():
+                    return self.send_error(HTTPStatus.NOT_FOUND)
+                blob = _zip_directory(EDIT_CRAFT_DIR)
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header(
+                    "Content-Disposition",
+                    'attachment; filename="edit-craft.zip"',
+                )
+                self.send_header("Content-Length", str(len(blob)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(blob)
+                return
+
+            if path.startswith("/api/edit-craft/"):
+                rel = path[len("/api/edit-craft/"):]
+                target = _resolve_under(EDIT_CRAFT_DIR, rel)
+                if target is None:
+                    return self.send_error(HTTPStatus.FORBIDDEN)
+                if not target.is_file():
+                    return self.send_error(HTTPStatus.NOT_FOUND)
+                ctype = _craft_content_type(target)
+                data = target.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", ctype)
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Cache-Control", "no-store")
+                # Force-download via ?download=1
+                if "download=1" in (parsed.query or ""):
+                    self.send_header(
+                        "Content-Disposition",
+                        f'attachment; filename="{target.name}"',
+                    )
+                self.end_headers()
+                self.wfile.write(data)
+                return
 
             if path == "/api/config":
                 cfg = load_config()

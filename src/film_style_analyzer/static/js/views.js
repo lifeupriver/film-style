@@ -1027,6 +1027,222 @@ export function renderGuide(payload) {
   return page;
 }
 
+// ------------ edit-craft ---------------------------------------------------
+
+const CRAFT_SECTION_ORDER = [
+  { match: (p) => !p.includes("/"), label: "Top level" },
+  { match: (p) => p.startsWith("scenes/"), label: "Per-scene playbooks" },
+  {
+    match: (p) => p.startsWith("reference-edits/"),
+    label: "Annotated reference edits",
+  },
+  {
+    match: (p) => p.startsWith("macro-templates/"),
+    label: "Macro templates (JSON)",
+  },
+  { match: (p) => p.startsWith("data/"), label: "Aggregations (JSON)" },
+];
+
+const CRAFT_SUGGESTED_FIRST = "README.md";
+
+function fmtSize(bytes) {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}KB`;
+  return `${(bytes / 1024 / 1024).toFixed(2)}MB`;
+}
+
+function craftBucket(files) {
+  const buckets = CRAFT_SECTION_ORDER.map((s) => ({ ...s, files: [] }));
+  for (const f of files) {
+    const b = buckets.find((x) => x.match(f.path));
+    if (b) b.files.push(f);
+  }
+  return buckets.filter((b) => b.files.length > 0);
+}
+
+export function renderCraft(payload) {
+  const page = el("div", { class: "page page--craft" });
+
+  page.appendChild(
+    el("section", { class: "hero" }, [
+      el("p", { class: "hero__kicker" }, ["Edit-Craft Library"]),
+      (() => {
+        const h = el("h1", { class: "hero__display" });
+        h.appendChild(document.createTextNode("How "));
+        h.appendChild(el("em", {}, ["this house"]));
+        h.appendChild(document.createTextNode(" cuts a wedding film."));
+        return h;
+      })(),
+      el("p", { class: "hero__lede" }, [
+        "Per-scene playbooks, annotated reference edits, ",
+        "machine-readable selection rules, and macro templates. ",
+        "Generated from analysis of 17 finished films, 2,478 clips, 627 chapters.",
+      ]),
+    ])
+  );
+
+  if (!payload?.exists || !payload?.files?.length) {
+    page.appendChild(
+      el("section", { class: "state" }, [
+        el("p", { class: "state__kicker" }, ["No edit-craft library on file"]),
+        el("p", { class: "state__title" }, ["Awaiting generation."]),
+        el("p", { class: "state__lede" }, [
+          "Run the per-scene playbook + reference-edit pipeline first.",
+        ]),
+      ])
+    );
+    return page;
+  }
+
+  // Top action bar — zip download + count
+  const totalSize = payload.files.reduce((s, f) => s + (f.size || 0), 0);
+  page.appendChild(
+    el("section", { class: "craft-toolbar" }, [
+      el(
+        "p",
+        { class: "craft-toolbar__count" },
+        [`${payload.files.length} files · ${fmtSize(totalSize)} total`]
+      ),
+      el(
+        "a",
+        {
+          class: "btn btn--primary",
+          href: "/api/edit-craft.zip",
+          download: "edit-craft.zip",
+        },
+        ["Download all (zip)"]
+      ),
+    ])
+  );
+
+  // Two-column layout
+  const tree = el("aside", { class: "craft-tree", "aria-label": "Doc tree" });
+  const buckets = craftBucket(payload.files);
+  const allLinks = [];
+  for (const bucket of buckets) {
+    tree.appendChild(el("p", { class: "craft-tree__heading" }, [bucket.label]));
+    const ul = el("ul", { class: "craft-tree__list" });
+    for (const f of bucket.files) {
+      const link = el(
+        "a",
+        {
+          class: "craft-tree__item",
+          href: `#/craft/${encodeURIComponent(f.path)}`,
+          "data-craft-path": f.path,
+        },
+        [
+          el("span", { class: "craft-tree__name" }, [
+            f.path.split("/").pop(),
+          ]),
+          el("span", { class: "craft-tree__size" }, [fmtSize(f.size)]),
+        ]
+      );
+      allLinks.push(link);
+      ul.appendChild(el("li", {}, [link]));
+    }
+    tree.appendChild(ul);
+  }
+
+  const content = el("article", {
+    class: "craft-content",
+    "data-id": "craft-content",
+  });
+  content.appendChild(
+    el("p", { class: "state__kicker" }, ["Pick a doc on the left."])
+  );
+
+  const shell = el("div", { class: "craft-shell" }, [tree, content]);
+  page.appendChild(shell);
+
+  // Wire up link clicks. We don't want to actually navigate — we fetch
+  // the doc and render in-place, but we DO want to update the URL hash
+  // so the user can deep-link.
+  const loadDoc = async (relPath) => {
+    content.replaceChildren(
+      el("p", { class: "state__kicker" }, ["Loading…"])
+    );
+    try {
+      const url = `/api/edit-craft/${encodeURIComponent(relPath).replace(/%2F/g, "/")}`;
+      const res = await fetch(url, { headers: { Accept: "text/markdown,*/*" } });
+      if (!res.ok) throw new Error(`request failed: ${res.status}`);
+      const text = await res.text();
+      const ext = relPath.split(".").pop().toLowerCase();
+      const header = el("header", { class: "craft-content__header" }, [
+        el("p", { class: "craft-content__path" }, [relPath]),
+        el(
+          "a",
+          {
+            class: "btn btn--ghost",
+            href: `${url}?download=1`,
+            download: relPath.split("/").pop(),
+          },
+          ["Download file"]
+        ),
+      ]);
+
+      let body;
+      if (ext === "md") {
+        const { node } = renderMarkdown(text);
+        node.classList.add("guide-prose");
+        body = node;
+      } else if (ext === "json") {
+        let pretty = text;
+        try {
+          pretty = JSON.stringify(JSON.parse(text), null, 2);
+        } catch {}
+        body = el("pre", { class: "craft-json" }, [
+          el("code", {}, [pretty]),
+        ]);
+      } else {
+        body = el("pre", { class: "craft-json" }, [el("code", {}, [text])]);
+      }
+      content.replaceChildren(header, body);
+
+      // active highlight
+      allLinks.forEach((a) =>
+        a.classList.toggle(
+          "is-active",
+          a.dataset.craftPath === relPath
+        )
+      );
+
+      // scroll content to top
+      content.scrollTop = 0;
+      window.scrollTo({ top: 0 });
+    } catch (err) {
+      content.replaceChildren(
+        el("p", { class: "state__kicker" }, ["Failed to load."]),
+        el("p", { class: "state__lede" }, [String(err.message || err)])
+      );
+    }
+  };
+
+  for (const a of allLinks) {
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      const rel = a.dataset.craftPath;
+      // Update hash without triggering full route change
+      history.replaceState(
+        null,
+        "",
+        `#/craft/${encodeURIComponent(rel)}`
+      );
+      loadDoc(rel);
+    });
+  }
+
+  // If hash already deep-links to a doc, load that. Otherwise show README.
+  const hashTail = (location.hash || "").replace(/^#\/craft\/?/, "");
+  let initial = hashTail ? decodeURIComponent(hashTail) : CRAFT_SUGGESTED_FIRST;
+  if (!payload.files.find((f) => f.path === initial)) {
+    initial = CRAFT_SUGGESTED_FIRST;
+  }
+  // Use setTimeout so the page is mounted before we touch its DOM/scrolling.
+  setTimeout(() => loadDoc(initial), 30);
+
+  return page;
+}
+
 // ------------ compare ------------------------------------------------------
 
 export function renderCompareIntro() {

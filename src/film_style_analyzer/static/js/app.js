@@ -5,6 +5,7 @@ import {
   renderCorpus,
   renderFilm,
   renderGuide,
+  renderCraft,
   renderCompareIntro,
   renderCompareResult,
   renderSettings,
@@ -59,6 +60,7 @@ const ROUTES = [
   { test: /^\/?$/, name: "/", render: viewCorpus },
   { test: /^\/film\/(.+)$/, name: "/film", render: viewFilm },
   { test: /^\/guide\/?$/, name: "/guide", render: viewGuide },
+  { test: /^\/craft(?:\/.*)?$/, name: "/craft", render: viewCraft },
   { test: /^\/compare\/?$/, name: "/compare", render: viewCompare },
   { test: /^\/settings\/?$/, name: "/settings", render: viewSettings },
 ];
@@ -159,6 +161,14 @@ async function viewFilm(match) {
 async function viewGuide() {
   const payload = await api("/api/guide").catch(() => ({ exists: false }));
   return renderGuide(payload);
+}
+
+async function viewCraft() {
+  const payload = await api("/api/edit-craft").catch(() => ({
+    exists: false,
+    files: [],
+  }));
+  return renderCraft(payload);
 }
 
 async function viewCompare() {
