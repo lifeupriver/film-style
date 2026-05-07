@@ -1243,6 +1243,489 @@ export function renderCraft(payload) {
   return page;
 }
 
+// ------------ shot profile ------------------------------------------------
+
+const FRAMING_LABEL = {
+  "extreme-close-up": "Extreme close-up",
+  "close-up": "Close-up",
+  "medium-close": "Medium close",
+  "medium": "Medium",
+  "medium-full": "Medium-full",
+  "full": "Full",
+  "wide": "Wide",
+  "no-person": "No person",
+};
+
+const EMOTION_LABEL = {
+  neutral: "Neutral",
+  happy: "Happy",
+  sad: "Sad",
+  fear: "Fear",
+  angry: "Angry",
+  surprise: "Surprise",
+  disgust: "Disgust",
+};
+
+function pctBar(value, max = 1.0) {
+  const clamped = Math.max(0, Math.min(1, value / max));
+  return el(
+    "span",
+    {
+      class: "shot-bar",
+      style: {
+        display: "inline-block",
+        height: "6px",
+        width: "100%",
+        background: "color-mix(in srgb, var(--ink-3) 18%, transparent)",
+        position: "relative",
+        verticalAlign: "middle",
+      },
+    },
+    [
+      el("span", {
+        style: {
+          position: "absolute",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: `${(clamped * 100).toFixed(1)}%`,
+          background: "var(--amber)",
+        },
+      }),
+    ]
+  );
+}
+
+function distributionList(entries) {
+  // entries: [[key, value 0..1], ...] already sorted desc.
+  return el(
+    "ul",
+    {
+      class: "shot-dist",
+      style: {
+        listStyle: "none",
+        padding: 0,
+        margin: 0,
+        display: "grid",
+        gridTemplateColumns: "minmax(7em, 12em) 1fr 4em",
+        rowGap: "0.65rem",
+        columnGap: "1rem",
+        alignItems: "center",
+        fontFamily: "var(--mono)",
+        fontSize: "0.78rem",
+      },
+    },
+    entries.flatMap(([key, val, label]) => [
+      el(
+        "span",
+        {
+          style: {
+            color: "var(--ink-2)",
+            letterSpacing: "0.04em",
+          },
+        },
+        [label || key]
+      ),
+      pctBar(val),
+      el(
+        "span",
+        {
+          style: {
+            textAlign: "right",
+            color: "var(--ink-1)",
+            fontVariantNumeric: "tabular-nums",
+          },
+        },
+        [`${(val * 100).toFixed(1)}%`]
+      ),
+    ])
+  );
+}
+
+function statRow(label, value, detail) {
+  return el(
+    "div",
+    {
+      style: {
+        display: "grid",
+        gridTemplateColumns: "1fr auto",
+        alignItems: "baseline",
+        padding: "0.65rem 0",
+        borderBottom: "1px dashed color-mix(in srgb, var(--ink-3) 25%, transparent)",
+        gap: "1rem",
+      },
+    },
+    [
+      el(
+        "span",
+        {
+          style: {
+            fontFamily: "var(--mono)",
+            fontSize: "0.72rem",
+            letterSpacing: "0.16em",
+            textTransform: "uppercase",
+            color: "var(--ink-2)",
+          },
+        },
+        [label]
+      ),
+      el(
+        "span",
+        {
+          style: {
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "flex-end",
+            gap: "0.15rem",
+          },
+        },
+        [
+          el(
+            "span",
+            {
+              style: {
+                fontFamily: "var(--serif)",
+                fontSize: "1.05rem",
+                color: "var(--ink-1)",
+                fontVariantNumeric: "tabular-nums",
+              },
+            },
+            [value]
+          ),
+          detail
+            ? el(
+                "span",
+                {
+                  style: {
+                    fontFamily: "var(--mono)",
+                    fontSize: "0.66rem",
+                    letterSpacing: "0.12em",
+                    color: "var(--ink-3)",
+                  },
+                },
+                [detail]
+              )
+            : null,
+        ]
+      ),
+    ]
+  );
+}
+
+function plateHeader(plate, title) {
+  return el("header", { class: "section-rule" }, [
+    el("span", { class: "section-rule__plate" }, [plate]),
+    el("span", { class: "section-rule__title" }, [title]),
+    el("span", { class: "section-rule__line" }),
+  ]);
+}
+
+export function renderShotProfile(payload) {
+  const page = el("div", { class: "page page--shot-profile" });
+
+  page.appendChild(
+    el("section", { class: "hero" }, [
+      el("p", { class: "hero__kicker" }, ["Shot Profile"]),
+      (() => {
+        const h = el("h1", { class: "hero__display" });
+        h.appendChild(document.createTextNode("Composition and emotion, "));
+        h.appendChild(el("em", {}, ["distilled"]));
+        h.appendChild(document.createTextNode("."));
+        return h;
+      })(),
+      el("p", { class: "hero__lede" }, [
+        "What every kept frame in the Archive has in common — framing, faces, headroom, mood. The reference ",
+        el("em", {}, ["score-clips"]),
+        " uses to weight raw footage.",
+      ]),
+    ])
+  );
+
+  if (!payload?.exists || !payload.profile) {
+    page.appendChild(
+      el("section", { class: "state" }, [
+        el("p", { class: "state__kicker" }, ["No shot profile on file"]),
+        el("p", { class: "state__title" }, ["Awaiting compilation."]),
+        el("p", { class: "state__lede" }, [
+          "Run the learner over your analysed thumbnails, then return.",
+        ]),
+        el("p", { class: "state__cmd" }, ["film-style learn-shots"]),
+      ])
+    );
+    return page;
+  }
+
+  const p = payload.profile;
+
+  // ----- numbers strip ------
+  const framingPref = p.preferred_framing || "—";
+  const facesPct = p?.face_presence?.frames_with_faces_pct ?? 0;
+  const figures = el("section", { class: "figures" }, [
+    figure(
+      "I · Films",
+      `${p.films_analyzed ?? 0}`,
+      "in the corpus",
+      `${(p.total_frames_analyzed ?? 0).toLocaleString()} frames analyzed`
+    ),
+    figure(
+      "II · Framing",
+      FRAMING_LABEL[framingPref] || framingPref,
+      "preferred",
+      `${((p.framing_distribution?.[framingPref] ?? 0) * 100).toFixed(0)}% of kept frames`
+    ),
+    figure(
+      "III · Faces",
+      `${facesPct.toFixed(0)}%`,
+      "of frames carry faces",
+      `${(p?.face_presence?.avg_faces_per_frame ?? 0).toFixed(2)} avg per frame`
+    ),
+    figure(
+      "IV · Headroom",
+      `${(p?.composition?.avg_headroom_pct ?? 0).toFixed(0)}%`,
+      "average",
+      p?.composition?.headroom_range
+        ? `${p.composition.headroom_range[0].toFixed(0)}–${p.composition.headroom_range[1].toFixed(0)}% range`
+        : ""
+    ),
+  ]);
+  page.appendChild(figures);
+
+  // ----- framing distribution ------
+  const framingEntries = Object.entries(p.framing_distribution || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => [k, v, FRAMING_LABEL[k] || k]);
+
+  page.appendChild(
+    el("section", {}, [
+      plateHeader("Plate I", "Body framing across the archive"),
+      framingEntries.length
+        ? distributionList(framingEntries)
+        : el("p", { class: "chart__caption" }, ["No framing distribution recorded."]),
+      el("p", { class: "chart__caption", style: { marginTop: "1rem" } }, [
+        "Mediapipe face + pose detection on every kept thumbnail. ",
+        el("em", {}, ["No-person"]),
+        " covers landscape, detail, and B-roll frames.",
+      ]),
+    ])
+  );
+
+  // ----- composition ------
+  const comp = p.composition || {};
+  page.appendChild(
+    el("section", {}, [
+      plateHeader("Plate II", "Where faces sit in the frame"),
+      el("div", { class: "shot-stats" }, [
+        statRow(
+          "Face center · vertical",
+          comp.preferred_face_center_y != null
+            ? comp.preferred_face_center_y.toFixed(3)
+            : "—",
+          comp.preferred_face_center_y_range
+            ? `10–90 pct: ${comp.preferred_face_center_y_range[0].toFixed(2)} → ${comp.preferred_face_center_y_range[1].toFixed(2)}`
+            : "0 = top, 1 = bottom"
+        ),
+        statRow(
+          "Headroom",
+          comp.avg_headroom_pct != null
+            ? `${comp.avg_headroom_pct.toFixed(1)}%`
+            : "—",
+          comp.headroom_range
+            ? `${comp.headroom_range[0].toFixed(0)}–${comp.headroom_range[1].toFixed(0)}% range`
+            : ""
+        ),
+        statRow(
+          "Rule-of-thirds adherence",
+          comp.avg_thirds_score != null
+            ? comp.avg_thirds_score.toFixed(3)
+            : "—",
+          "0 = ignored · 1 = on-thirds"
+        ),
+        statRow(
+          "Facing camera",
+          p?.face_presence?.facing_camera_pct != null
+            ? `${p.face_presence.facing_camera_pct.toFixed(0)}%`
+            : "—",
+          "of frames with detected faces"
+        ),
+        statRow(
+          "Primary face size",
+          p?.face_presence?.primary_face_avg_size_pct != null
+            ? `${p.face_presence.primary_face_avg_size_pct.toFixed(1)}%`
+            : "—",
+          "of frame area"
+        ),
+      ]),
+    ])
+  );
+
+  // ----- exposure / sharpness / separation ------
+  const exp = p.exposure || {};
+  const shp = p.sharpness || {};
+  const sep = p.subject_separation || {};
+  page.appendChild(
+    el("section", {}, [
+      plateHeader("Plate III", "Exposure, focus, separation"),
+      el("div", { class: "shot-stats" }, [
+        statRow(
+          "Brightness",
+          exp.avg_brightness != null ? exp.avg_brightness.toFixed(3) : "—",
+          exp.brightness_range
+            ? `${exp.brightness_range[0].toFixed(2)} → ${exp.brightness_range[1].toFixed(2)} band`
+            : "0 = pitch · 1 = blown"
+        ),
+        statRow(
+          "Sharpness · Laplacian variance",
+          shp.avg_laplacian != null ? shp.avg_laplacian.toFixed(0) : "—",
+          shp.min_laplacian_used != null
+            ? `reject floor ≈ ${shp.min_laplacian_used.toFixed(1)}`
+            : ""
+        ),
+        statRow(
+          "Subject separation",
+          sep.avg_center_to_edge_ratio != null
+            ? `${sep.avg_center_to_edge_ratio.toFixed(2)}×`
+            : "—",
+          sep.min_ratio_used != null
+            ? `reject below ${sep.min_ratio_used.toFixed(2)}×`
+            : "center brightness vs. edges"
+        ),
+      ]),
+    ])
+  );
+
+  // ----- emotion ------
+  const emo = p.emotion_preferences || {};
+  const emoEntries = Object.entries(emo.dominant_emotions_distribution || {})
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => [k, v, EMOTION_LABEL[k] || k]);
+
+  page.appendChild(
+    el("section", {}, [
+      plateHeader("Plate IV", "Emotion read across kept frames"),
+      el("div", { class: "shot-stats" }, [
+        statRow(
+          "Avg peak emotion",
+          emo.avg_peak_emotion_in_finished_films != null
+            ? emo.avg_peak_emotion_in_finished_films.toFixed(1)
+            : "—",
+          "DeepFace intensity · 0–100"
+        ),
+        statRow(
+          "Frames > 20 intensity",
+          emo.pct_frames_with_emotion_above_20 != null
+            ? `${emo.pct_frames_with_emotion_above_20.toFixed(0)}%`
+            : "—",
+          "noticeable emotion"
+        ),
+        statRow(
+          "Frames > 40 intensity",
+          emo.pct_frames_with_emotion_above_40 != null
+            ? `${emo.pct_frames_with_emotion_above_40.toFixed(0)}%`
+            : "—",
+          "strong emotion"
+        ),
+        statRow(
+          "Neutral",
+          emo.pct_frames_neutral != null
+            ? `${emo.pct_frames_neutral.toFixed(0)}%`
+            : "—",
+          "of detected faces"
+        ),
+      ]),
+      emoEntries.length
+        ? el(
+            "div",
+            { style: { marginTop: "1.5rem" } },
+            [
+              el(
+                "p",
+                {
+                  class: "chart__caption",
+                  style: { marginBottom: "0.75rem" },
+                },
+                ["Dominant emotion distribution"]
+              ),
+              distributionList(emoEntries),
+            ]
+          )
+        : null,
+      el(
+        "p",
+        { class: "chart__caption", style: { marginTop: "1rem" } },
+        [
+          "DeepFace's emotion model leans toward fear / sad / angry on contrasty footage; read these directionally.",
+        ]
+      ),
+    ])
+  );
+
+  // ----- rejection rules ------
+  const rej = p.rejection_rules_learned || {};
+  const rejEntries = [
+    ["Head cut-off", rej.head_cutoff_pct],
+    ["No face in people-shot", rej.no_face_in_people_shots_pct],
+    ["Very-soft focus", rej.very_soft_focus_pct],
+    ["Severely underexposed", rej.severely_underexposed_pct],
+    ["Severely overexposed", rej.severely_overexposed_pct],
+  ];
+  page.appendChild(
+    el("section", {}, [
+      plateHeader("Plate V", "Rejection rules learned"),
+      el(
+        "p",
+        { class: "chart__caption", style: { marginBottom: "1rem" } },
+        [
+          "Patterns rare enough in the kept work that ",
+          el("em", {}, ["score-clips"]),
+          " will treat them as hard or stacking rejections.",
+        ]
+      ),
+      el("div", { class: "shot-stats" },
+        rejEntries.map(([label, val]) =>
+          statRow(
+            label,
+            val != null ? `${val.toFixed(2)}%` : "—",
+            val == null ? "" : val < 0.5 ? "rare in kept work" : "still appears"
+          )
+        )
+      ),
+    ])
+  );
+
+  // ----- meta ------
+  page.appendChild(
+    el("section", {
+      style: {
+        marginTop: "3rem",
+        paddingTop: "1.5rem",
+        borderTop: "1px solid color-mix(in srgb, var(--ink-3) 25%, transparent)",
+        fontFamily: "var(--mono)",
+        fontSize: "0.7rem",
+        letterSpacing: "0.16em",
+        textTransform: "uppercase",
+        color: "var(--ink-3)",
+        display: "flex",
+        gap: "2rem",
+        flexWrap: "wrap",
+      },
+    }, [
+      el("span", {}, [
+        `analyzer ${p.analyzer_version || "?"}`,
+      ]),
+      el("span", {}, [
+        `generated ${
+          p.generated_at ? p.generated_at.replace("T", " ").replace(/\..+$/, "Z") : "—"
+        }`,
+      ]),
+      el("span", {}, [
+        `path ${payload.path || ""}`,
+      ]),
+    ])
+  );
+
+  return page;
+}
+
 // ------------ compare ------------------------------------------------------
 
 export function renderCompareIntro() {
