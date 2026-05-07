@@ -1,40 +1,86 @@
 # film-style-analyzer
 
-> Analyze a folder of finished films and produce a typed, genre-aware style
-> profile that AI tools can consume to assemble new edits in your style.
+**Point this at your finished films. It learns how you cut.**
 
-Works for any editorial genre — **wedding films, commercials, brand
-content, social shorts, music videos, documentaries** — via a pluggable
-"genre pack" abstraction that adapts vocabularies, prompts, and tuned
-numeric defaults to the genre you actually edit.
+You have a body of work — a season of weddings, a year of commercials, a
+documentary cut here and there — and a recognizable editing style buried
+inside it. The pacing. How long you let a shot breathe. When speech enters
+the mix. How often you cut on a beat. The color grade you keep coming
+back to. The compositions and emotional moments you actually keep when
+you assemble a finished film.
 
-A Python toolkit that watches your finished work, measures every dimension
-that defines an editor's style — pacing, cut rhythm, audio layering, color
-grade, shot composition, music tempo — and emits two artifacts:
+That style is hard to articulate, and it's impossible to hand to an
+assistant in a useful form. This tool watches every finished film in your
+archive, measures the choices you made cut by cut, and turns them into
+structured data you can read, share, or hand to an AI editing assistant.
 
-1. **`style-guide.md`** — a markdown briefing for humans (and for pasting
-   into NotebookLM as a source).
-2. **`style-profile.json`** — a typed, addressable contract for downstream
-   AI tools (e.g., assistants assembling rough cuts in your style via
-   Claude Desktop / MCP).
+### What you get out of it
 
-For shot-level work, two further commands turn the corpus's thumbnails
-into a learned compositional + emotional aesthetic and score raw footage
-clip-by-clip against it:
+- A **plain-English style guide** that summarizes how you actually cut —
+  the brief you'd hand a new assistant editor on day one.
+- A **machine-readable style profile** so an AI tool — Claude Desktop, a
+  rough-cut assembler, anything that can read JSON — has something
+  concrete to learn from when you say *"edit this in my style."*
+- A **local dashboard** to scrub the corpus, see the pacing curves, and
+  correct anywhere the analyzer guessed wrong.
+- A **shot-level aesthetic profile** built from every thumbnail in your
+  archive — preferred framing, headroom, lead room, thirds, exposure,
+  sharpness, even the emotional intensity you tend to keep — used to
+  **score raw footage clip-by-clip** so the rough-cut starts from a
+  shortlist of the keepers, not the whole card.
 
-3. **`shot-profile.json`** — written by `learn-shots`. Per-genre
-   distributions for framing, headroom, lead room, thirds, exposure,
-   sharpness, subject separation, and DeepFace emotion across every
-   thumbnail in the corpus.
-4. **`clip-scores.json`** — written by `score-clips`. A 0–100 score per
-   raw-footage clip with hard rejections, stacked soft penalties,
-   scene-aware emotion weighting, and optional stability- or
-   speech-bound trim points for downstream rough-cut assemblers.
+### Why bother
+
+- **See your own patterns.** Most editors can't articulate their style.
+  The pacing curve and decile breakdown make it visible.
+- **Catch a rough cut drifting.** `film-style compare ~/edits/v3.fcpxml`
+  scores a rough cut against your established profile and tells you
+  where the pacing is off, where dissolves pile up, where the structure
+  breaks from your norm.
+- **Make AI assistants actually useful.** Instead of *"edit it in my
+  style"* being a vibe, it becomes a measured contract — pacing
+  targets, transition mix, audio rules, scene structure, shot
+  preferences — that downstream tools read directly.
+- **Score the card before you touch the timeline.** Raw footage gets a
+  0–100 score against the framing, exposure, sharpness, and emotional
+  preferences learned from your archive, so you start the edit knowing
+  which clips are keepers, which are usable with trims, and which to
+  skip entirely.
+
+### How it works, in one paragraph
+
+You point `film-style analyze` at a folder of finished films. It runs
+frame-accurate scene detection, classifies every transition, builds a
+per-clip color palette, transcribes speech, identifies music vs.
+ambient, tracks tempo and beat alignment, and extracts a thumbnail per
+clip. Then `film-style guide` aggregates that across films into a
+**style profile** (typed JSON) and a **style guide** (Claude-written
+markdown). `film-style learn-shots` extends it with a per-frame
+composition + emotion pass over every thumbnail in the archive.
+`film-style score-clips` then scores raw footage proxies against the
+learned aesthetic. Everything is local; nothing leaves your machine
+unless you call a tool that explicitly talks to Anthropic, Gemini,
+Vimeo, or YouTube.
+
+Works for **wedding films, commercials, brand content, social shorts,
+music videos, and documentaries** — each shipped as a pluggable "genre
+pack" that adapts vocabulary, prompts, and tuned numeric defaults to
+the editorial conventions of that genre. One genre per workspace; switch
+by editing one config field.
 
 A bundled web dashboard renders the corpus visually, and an MCP server
 exposes the whole pipeline to Claude Desktop so you can ask Claude to
 *"analyze these commercials and tell me what's distinctive about this
 editor's style"* in chat — and Claude actually does it.
+
+#### Artifacts at a glance
+
+| File | Written by | What it's for |
+|---|---|---|
+| `style-guide.md` | `guide` | Human-readable brief; paste into NotebookLM as a source |
+| `style-profile.json` | `guide` | Typed contract for AI tools (the *"edit in my style"* artifact) |
+| `shot-profile.json` | `learn-shots` | Learned framing / headroom / thirds / exposure / emotion preferences |
+| `clip-scores.json` | `score-clips` | Per-clip 0–100 score + trim points for raw footage |
 
 ---
 
