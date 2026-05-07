@@ -17,10 +17,15 @@ pytest
 Optional extras for testing the heavier code paths:
 
 ```bash
-pip install -e '.[music,vimeo,gemini,mcp]' --break-system-packages
+pip install -e '.[music,vimeo,gemini,mcp,shots]' --break-system-packages
 ```
 
 `[audio]` (WhisperX + inaSpeechSegmenter) needs Python 3.11 or 3.12.
+`[shots]` (MediaPipe + OpenCV + DeepFace) is needed only for
+`learn-shots` and `score-clips` end-to-end smoke tests; the unit suite
+runs without it because the shot-composition and emotion modules
+lazy-import their dependencies and tests use synthetic frames + stubbed
+detection results.
 
 ## Conventions
 
