@@ -305,6 +305,98 @@ def tool_set_shot_sizes_bulk(stem: str, sizes: dict) -> dict[str, Any]:
     }
 
 
+def tool_get_undescribed_clip_thumbnails(stem: str, start_index: int = 0,
+                                           batch_size: int = 8) -> dict[str, Any]:
+    """Return paths for up to `batch_size` clips that DO NOT yet have a
+    shot_description, starting at clip index `start_index`. Used by Claude
+    Desktop's describe-clips workflow."""
+    a = _load_film(stem)
+    pending = [c for c in a.cuts.clips
+               if c.shot_description is None and c.thumbnail and c.index >= start_index]
+    batch = pending[:batch_size]
+    return {
+        "stem": stem,
+        "clips": [
+            {
+                "clip_index": c.index,
+                "start_sec": c.start_sec,
+                "end_sec": c.end_sec,
+                "duration_sec": c.duration_sec,
+                "shot_size": c.shot_size,
+                "thumbnail_path": str((DATA_ROOT / c.thumbnail).resolve()),
+            }
+            for c in batch
+        ],
+        "remaining_after_batch": max(
+            0,
+            sum(1 for c in a.cuts.clips
+                if c.shot_description is None and c.thumbnail) - len(batch),
+        ),
+        "schema_hint": {
+            "subjects": ["bride", "groom", "couple", "wedding_party",
+                         "officiant", "parents", "family", "kids", "guests",
+                         "details_only"],
+            "setting": ["altar", "aisle", "lawn", "garden", "dance_floor",
+                        "tent", "ballroom", "ceremony_seating",
+                        "getting_ready_room", "reception_table", "hallway",
+                        "exterior_landscape", "interior_other", "vehicle"],
+            "lighting": ["golden_hour", "natural_daylight", "overcast",
+                         "candle", "warm_indoor", "mixed_indoor",
+                         "dim_indoor", "uplighting_warm", "uplighting_cool",
+                         "dance_floor", "night_exterior"],
+            "camera": ["locked", "slight_handheld", "handheld", "push_in",
+                       "pull_back", "pan", "tilt", "gimbal_walk", "drone",
+                       "rack_focus", "slow_motion"],
+            "mood": ["tender", "joyful", "ceremonial", "intimate", "candid",
+                     "kinetic", "still", "anticipatory", "celebratory"],
+            "action": "short imperative phrase, e.g. 'embracing', "
+                      "'walking down aisle', 'looking down at flowers'",
+            "description": "one short free-form sentence",
+        },
+    }
+
+
+def tool_set_clip_descriptions_bulk(stem: str, descriptions: dict) -> dict[str, Any]:
+    """Apply many clip shot_descriptions at once. `descriptions` maps
+    clip_index (int) → ShotDescription dict (or None to clear). Each value
+    is validated as a ShotDescription pydantic model."""
+    from .schemas import ShotDescription
+    a = _load_film(stem)
+    written = 0
+    skipped: list[dict] = []
+    for idx_key, payload in descriptions.items():
+        try:
+            idx = int(idx_key)
+        except (TypeError, ValueError):
+            skipped.append({"index": idx_key, "reason": "non-integer key"})
+            continue
+        if idx < 0 or idx >= len(a.cuts.clips):
+            skipped.append({"index": idx, "reason": f"out of range (have {len(a.cuts.clips)})"})
+            continue
+        if payload is None:
+            a.cuts.clips[idx].shot_description = None
+            written += 1
+            continue
+        try:
+            sd = ShotDescription.model_validate(payload)
+        except Exception as e:
+            skipped.append({"index": idx, "reason": f"invalid payload: {e}"})
+            continue
+        a.cuts.clips[idx].shot_description = sd
+        written += 1
+    target = ANALYSES_DIR / f"{_safe_stem(stem)}.json"
+    target.write_text(a.model_dump_json(indent=2))
+    return {
+        "stem": stem,
+        "descriptions_applied": written,
+        "skipped": skipped,
+        "remaining_undescribed": sum(
+            1 for c in a.cuts.clips
+            if c.shot_description is None and c.thumbnail
+        ),
+    }
+
+
 def tool_set_chapter_label(stem: str, chapter_index: int,
                            label: str | None) -> dict[str, Any]:
     """Correct a chapter's scene label. The vision pass uses these
@@ -1300,6 +1392,59 @@ def build_server():
         (int) → shot label (str), or clip_index → null to clear. Validates
         each label against the active pack's shot_labels."""
         return tool_set_shot_sizes_bulk(stem, sizes)
+
+    @mcp.tool()
+    def get_clip_thumbnails_to_describe(stem: str, start_index: int = 0,
+                                        batch_size: int = 8):
+        """Return image content blocks for up to `batch_size` clips that
+        DON'T yet have a shot_description, starting at clip index
+        `start_index`. Look at each thumbnail and emit a structured
+        ShotDescription per clip — subjects, action, setting, lighting,
+        camera, mood, plus a one-line free-form `description`. Then call
+        `set_clip_descriptions_bulk` with the mapping.
+
+        Shot descriptions answer 'what's in this clip?' so downstream tools
+        can pick clips from raw footage that match the editor's choices.
+        Iterate via `start_index` to cover the full film. The reply
+        includes a `schema_hint` with controlled vocabularies for each
+        field — use those values where they fit, free text where they
+        don't."""
+        from mcp.server.fastmcp.utilities.types import Image as MCPImage
+        info = tool_get_undescribed_clip_thumbnails(
+            stem, start_index=start_index, batch_size=batch_size,
+        )
+        out: list = [
+            f"Film: {info['stem']}",
+            f"Showing {len(info['clips'])} clip(s); "
+            f"{info['remaining_after_batch']} remaining after this batch.",
+            f"Schema vocabularies: {info['schema_hint']}",
+        ]
+        for c in info["clips"]:
+            shot_size = c.get("shot_size") or "(unlabeled)"
+            out.append(
+                f"--- clip_index={c['clip_index']} "
+                f"(t={c['start_sec']:.1f}s, dur={c['duration_sec']:.2f}s, "
+                f"shot_size={shot_size}) ---"
+            )
+            try:
+                out.append(MCPImage(path=c["thumbnail_path"]))
+            except Exception as e:
+                out.append(f"[failed to load thumbnail: {e}]")
+        out.append(
+            "Now call set_clip_descriptions_bulk(stem=..., descriptions={"
+            "clip_index: {subjects: [...], action: ..., setting: ..., "
+            "lighting: ..., camera: ..., mood: ..., description: ...}, ...})."
+        )
+        return out
+
+    @mcp.tool()
+    def set_clip_descriptions_bulk(stem: str, descriptions: dict) -> dict:
+        """Apply many clip shot_descriptions at once. `descriptions` maps
+        clip_index (int) → ShotDescription dict (or null to clear). Each
+        ShotDescription is a dict with optional fields: subjects (list),
+        action (str), setting (str), lighting (str), camera (str), mood
+        (str), description (str)."""
+        return tool_set_clip_descriptions_bulk(stem, descriptions)
 
     @mcp.tool()
     def compare_fcpxml(fcpxml_content: str | None = None,

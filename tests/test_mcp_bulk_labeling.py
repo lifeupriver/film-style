@@ -158,3 +158,66 @@ def test_set_shot_sizes_bulk_rejects_invalid(fixture_home):
     )
     assert res["sizes_applied"] == 2
     assert any("invalid shot label" in s["reason"] for s in res["skipped"])
+
+
+def test_get_undescribed_clip_thumbnails_returns_schema_hint(fixture_home):
+    _, mcp_server = fixture_home
+    _write_film(mcp_server, "alpha", n_clips=4)
+    out = mcp_server.tool_get_undescribed_clip_thumbnails("alpha", batch_size=2)
+    assert out["stem"] == "alpha"
+    assert len(out["clips"]) == 2
+    assert out["remaining_after_batch"] == 2
+    assert "subjects" in out["schema_hint"]
+    assert "bride" in out["schema_hint"]["subjects"]
+    assert "tender" in out["schema_hint"]["mood"]
+
+
+def test_set_clip_descriptions_bulk_writes_structured(fixture_home):
+    _, mcp_server = fixture_home
+    _write_film(mcp_server, "alpha", n_clips=3)
+    res = mcp_server.tool_set_clip_descriptions_bulk("alpha", {
+        "0": {
+            "subjects": ["bride", "groom"],
+            "action": "embracing",
+            "setting": "lawn",
+            "lighting": "golden_hour",
+            "camera": "slight_handheld",
+            "mood": "tender",
+            "description": "Bride leaning into groom's chest, both eyes closed.",
+        },
+        "1": {"subjects": ["details_only"], "action": "ring close-up"},
+    })
+    assert res["descriptions_applied"] == 2
+    assert res["skipped"] == []
+    assert res["remaining_undescribed"] == 1
+
+    on_disk = json.loads((mcp_server.ANALYSES_DIR / "alpha.json").read_text())
+    sd0 = on_disk["cuts"]["clips"][0]["shot_description"]
+    assert sd0["subjects"] == ["bride", "groom"]
+    assert sd0["action"] == "embracing"
+    assert sd0["mood"] == "tender"
+    assert "Bride leaning" in sd0["description"]
+
+
+def test_set_clip_descriptions_bulk_clears_with_none(fixture_home):
+    _, mcp_server = fixture_home
+    _write_film(mcp_server, "alpha", n_clips=2)
+    mcp_server.tool_set_clip_descriptions_bulk("alpha", {
+        "0": {"subjects": ["bride"], "mood": "tender"},
+    })
+    res = mcp_server.tool_set_clip_descriptions_bulk("alpha", {"0": None})
+    assert res["descriptions_applied"] == 1
+    on_disk = json.loads((mcp_server.ANALYSES_DIR / "alpha.json").read_text())
+    assert on_disk["cuts"]["clips"][0]["shot_description"] is None
+
+
+def test_set_clip_descriptions_bulk_rejects_garbage(fixture_home):
+    _, mcp_server = fixture_home
+    _write_film(mcp_server, "alpha", n_clips=2)
+    # `subjects` must be a list, not a string — pydantic rejects this.
+    res = mcp_server.tool_set_clip_descriptions_bulk("alpha", {
+        "0": {"subjects": "bride", "mood": "tender"},
+        "1": {"action": "embracing"},
+    })
+    assert res["descriptions_applied"] == 1  # only clip 1 wrote
+    assert any("invalid payload" in s["reason"] for s in res["skipped"])
