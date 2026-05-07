@@ -1689,3 +1689,130 @@ main {
     widows: 3;
   }
 }
+
+/* ============================================================================
+   Shot descriptions — clip detail panel + filmstrip mood tags + field pills
+   ============================================================================ */
+
+.filmstrip__coverage {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  margin: 0 0 0.5rem 0;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.filmstrip__cell--described {
+  outline: 1px solid var(--accent, rgba(0, 0, 0, 0.15));
+  outline-offset: -1px;
+}
+
+.mood-tag {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 0.1em 0.4em;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.55);
+  color: white;
+  font-family: var(--mono);
+  pointer-events: none;
+}
+.mood-tag--tender        { background: rgba(180, 95, 130, 0.85); }
+.mood-tag--joyful        { background: rgba(220, 150, 50, 0.9); }
+.mood-tag--ceremonial    { background: rgba(80, 90, 130, 0.9); }
+.mood-tag--intimate      { background: rgba(140, 70, 90, 0.85); }
+.mood-tag--candid        { background: rgba(110, 120, 70, 0.85); }
+.mood-tag--kinetic       { background: rgba(190, 80, 60, 0.9); }
+.mood-tag--still         { background: rgba(95, 110, 110, 0.85); }
+.mood-tag--anticipatory  { background: rgba(140, 130, 80, 0.85); }
+.mood-tag--celebratory   { background: rgba(210, 130, 60, 0.9); }
+
+.clip-detail {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--rule, rgba(0, 0, 0, 0.12));
+  background: var(--surface-2, #f7f5f0);
+  display: grid;
+  grid-template-columns: minmax(200px, 280px) 1fr;
+  gap: 1.25rem;
+  align-items: start;
+}
+@media (max-width: 720px) {
+  .clip-detail { grid-template-columns: 1fr; }
+}
+
+.clip-detail__thumb {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: var(--surface-3);
+  border-radius: 2px;
+}
+.clip-detail__thumb--missing { display: block; }
+
+.clip-detail__body { display: flex; flex-direction: column; gap: 0.6rem; }
+
+.clip-detail__headline {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--ink-2);
+  letter-spacing: 0.02em;
+}
+
+.clip-detail__pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.clip-detail__desc {
+  margin: 0;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  color: var(--ink-1);
+}
+
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  border: 1px solid var(--rule, rgba(0, 0, 0, 0.15));
+  background: white;
+  padding: 0.15rem 0;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.pill__k {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: var(--surface-3, #ebe7df);
+  color: var(--ink-2);
+  padding: 0.15em 0.5em;
+}
+.pill__v {
+  padding: 0.15em 0.55em 0.15em 0.4em;
+  color: var(--ink-1);
+}
+
+.pill--subjects  { border-color: rgba(60, 110, 150, 0.5); }
+.pill--subjects .pill__k  { background: rgba(60, 110, 150, 0.18); }
+.pill--setting   { border-color: rgba(120, 100, 60, 0.5); }
+.pill--setting .pill__k   { background: rgba(120, 100, 60, 0.18); }
+.pill--lighting  { border-color: rgba(200, 160, 60, 0.6); }
+.pill--lighting .pill__k  { background: rgba(200, 160, 60, 0.22); }
+.pill--mood      { border-color: rgba(180, 95, 130, 0.55); }
+.pill--mood .pill__k      { background: rgba(180, 95, 130, 0.18); }
+.pill--camera    { border-color: rgba(95, 130, 110, 0.55); }
+.pill--camera .pill__k    { background: rgba(95, 130, 110, 0.18); }
+.pill--action    { border-color: rgba(140, 70, 90, 0.5); }
+.pill--action .pill__k    { background: rgba(140, 70, 90, 0.16); }
+.pill--shot      { border-color: rgba(60, 60, 60, 0.4); }
+.pill--shot .pill__k      { background: rgba(60, 60, 60, 0.12); }

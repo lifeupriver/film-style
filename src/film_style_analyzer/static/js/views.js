@@ -579,41 +579,142 @@ async function bindMatches(wrap, analysis) {
 }
 
 function buildFilmstrip(analysis, fps) {
-  const strip = el("div", { class: "filmstrip" }, [
-    el(
-      "div",
-      { class: "filmstrip__rail" },
-      analysis.cuts.clips.map((c) =>
-        el(
-          "a",
-          {
-            class: "filmstrip__cell",
-            href: `#`,
-            title: `Clip ${c.index + 1} · ${c.duration_sec.toFixed(2)}s`,
-            onclick: (e) => e.preventDefault(),
+  // Detail panel sits below the rail; clicking a cell populates it.
+  const detailPanel = el("div", {
+    class: "clip-detail",
+    style: { display: "none" },
+  });
+
+  function renderDetail(c) {
+    const sd = c.shot_description || null;
+    const pills = [];
+    function addPill(label, val, cls) {
+      if (!val) return;
+      const arr = Array.isArray(val) ? val : [val];
+      for (const v of arr) {
+        pills.push(el("span", { class: `pill pill--${cls}` }, [
+          el("span", { class: "pill__k" }, [label]),
+          el("span", { class: "pill__v" }, [v.replace(/_/g, " ")]),
+        ]));
+      }
+    }
+    if (sd) {
+      addPill("subjects", sd.subjects, "subjects");
+      addPill("setting", sd.setting, "setting");
+      addPill("lighting", sd.lighting, "lighting");
+      addPill("mood", sd.mood, "mood");
+      addPill("camera", sd.camera, "camera");
+      addPill("action", sd.action, "action");
+    }
+    if (c.shot_size) {
+      pills.push(el("span", { class: "pill pill--shot" }, [
+        el("span", { class: "pill__k" }, ["shot"]),
+        el("span", { class: "pill__v" }, [c.shot_size.replace(/_/g, " ")]),
+      ]));
+    }
+
+    const left = c.thumbnail
+      ? el("img", {
+          class: "clip-detail__thumb",
+          src: `/thumbs/${c.thumbnail.replace(/^thumbs\//, "")}`,
+          alt: "",
+        })
+      : el("div", { class: "clip-detail__thumb clip-detail__thumb--missing" });
+
+    const headline = `Clip ${String(c.index + 1).padStart(3, "0")} · ` +
+      `${formatTimecode(c.start_sec, fps)} → ${formatTimecode(c.end_sec, fps)} · ` +
+      `${c.duration_sec.toFixed(2)}s · ` +
+      `${c.transition_in} → ${c.transition_out}`;
+
+    const right = el("div", { class: "clip-detail__body" }, [
+      el("div", { class: "clip-detail__headline" }, [headline]),
+      pills.length
+        ? el("div", { class: "clip-detail__pills" }, pills)
+        : el("p", { class: "muted italic" }, [
+            "No shot description yet — drive a describe pass via Claude Desktop " +
+            "(get_clip_thumbnails_to_describe) or set claude_backend=cli " +
+            "and re-run the vision pass.",
+          ]),
+      sd?.description
+        ? el("p", { class: "clip-detail__desc" }, [sd.description])
+        : null,
+    ]);
+
+    detailPanel.replaceChildren(left, right);
+    detailPanel.style.display = "grid";
+  }
+
+  const rail = el(
+    "div",
+    { class: "filmstrip__rail" },
+    analysis.cuts.clips.map((c) => {
+      const sd = c.shot_description;
+      const titleParts = [
+        `Clip ${c.index + 1} · ${c.duration_sec.toFixed(2)}s`,
+      ];
+      if (c.shot_size) titleParts.push(c.shot_size.replace(/_/g, " "));
+      if (sd?.subjects?.length) titleParts.push(sd.subjects.join("+"));
+      if (sd?.action) titleParts.push(sd.action);
+      const cell = el(
+        "a",
+        {
+          class: "filmstrip__cell" + (sd ? " filmstrip__cell--described" : ""),
+          href: `#`,
+          title: titleParts.join(" · "),
+          onclick: (e) => {
+            e.preventDefault();
+            renderDetail(c);
+            detailPanel.scrollIntoView({ behavior: "smooth", block: "nearest" });
           },
-          [
-            c.thumbnail
-              ? el("img", {
-                  src: `/thumbs/${c.thumbnail.replace(/^thumbs\//, "")}`,
-                  alt: "",
-                  loading: "lazy",
-                })
-              : el("div", {
-                  style: {
-                    width: "100%",
-                    height: "100%",
-                    background: "var(--surface-3)",
-                  },
-                }),
-            el("span", { class: "ix" }, [String(c.index + 1).padStart(3, "0")]),
-            el("span", { class: "tc" }, [formatTimecode(c.start_sec, fps)]),
-          ]
-        )
-      )
-    ),
+        },
+        [
+          c.thumbnail
+            ? el("img", {
+                src: `/thumbs/${c.thumbnail.replace(/^thumbs\//, "")}`,
+                alt: "",
+                loading: "lazy",
+              })
+            : el("div", {
+                style: {
+                  width: "100%",
+                  height: "100%",
+                  background: "var(--surface-3)",
+                },
+              }),
+          el("span", { class: "ix" }, [String(c.index + 1).padStart(3, "0")]),
+          el("span", { class: "tc" }, [formatTimecode(c.start_sec, fps)]),
+          // Mood corner-tag for fast visual scanning when descriptions exist.
+          sd?.mood
+            ? el("span", { class: `mood-tag mood-tag--${sd.mood}` }, [
+                sd.mood.replace(/_/g, " "),
+              ])
+            : null,
+        ]
+      );
+      return cell;
+    })
+  );
+
+  // Coverage hint above the rail.
+  const total = analysis.cuts.clips.length;
+  const described = analysis.cuts.clips.filter((c) => c.shot_description).length;
+  const sized = analysis.cuts.clips.filter((c) => c.shot_size).length;
+  const coverage = el("div", { class: "filmstrip__coverage" }, [
+    el("span", {}, [
+      `${described}/${total} clips described`,
+      described < total ? " · " : "",
+      described < total
+        ? el("span", { class: "muted" }, [
+            "click any cell to inspect; missing descriptions show in italic.",
+          ])
+        : "",
+    ]),
+    el("span", { class: "muted" }, [
+      ` · ${sized}/${total} shot-sized`,
+    ]),
   ]);
-  return strip;
+
+  return el("div", { class: "filmstrip" }, [coverage, rail, detailPanel]);
 }
 
 function buildAudioRibbon(audio, totalSec) {
