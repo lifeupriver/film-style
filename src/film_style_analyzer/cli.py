@@ -39,6 +39,7 @@ AUDIO_DIR = _GENRE_ROOT / "audio"
 DEFAULT_GUIDE = _GENRE_ROOT / "style-guide.md"
 DEFAULT_STATS = _GENRE_ROOT / "aggregate-stats.json"
 DEFAULT_PROFILE = _GENRE_ROOT / "style-profile.json"
+DEFAULT_SHOT_PROFILE = DATA_ROOT / "shot-profile.json"
 SUPPORTED = {".mp4", ".mov", ".m4v", ".mkv"}
 
 console = Console()
@@ -671,6 +672,136 @@ def mcp_serve() -> None:
         run_stdio()
     except MCPServerError as e:
         raise click.ClickException(str(e))
+
+
+@cli.command(name="learn-shots")
+@click.option("--films", default=None,
+              help="Comma-separated list of film stems (or filenames) to limit "
+                   "analysis to. Default: all analyzed films.")
+@click.option("--output", type=click.Path(path_type=Path), default=DEFAULT_SHOT_PROFILE,
+              show_default=True, help="Where to write shot-profile.json.")
+@click.option("--force", is_flag=True, help="Rebuild even if shot-profile.json exists.")
+def learn_shots(films: str | None, output: Path, force: bool) -> None:
+    """Learn the editor's compositional + emotional preferences from the
+    thumbnail frames of every analyzed film."""
+    from .shot_profile import learn_from_thumbnails, write_profile
+
+    if output.exists() and not force:
+        raise click.ClickException(
+            f"shot profile already exists at {output}; pass --force to rebuild."
+        )
+
+    if not THUMBS_DIR.exists():
+        raise click.ClickException(
+            f"no thumbnails found at {THUMBS_DIR}. "
+            "Run `film-style analyze <path>` first."
+        )
+
+    film_list = [s.strip() for s in films.split(",")] if films else None
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("learning shots", total=1)
+
+        def cb(seen: int, total: int, name: str) -> None:
+            progress.update(task, total=total, completed=seen,
+                            description=f"learning {name}")
+
+        try:
+            profile = learn_from_thumbnails(
+                THUMBS_DIR, films=film_list, progress_cb=cb,
+            )
+        except FileNotFoundError as e:
+            raise click.ClickException(str(e))
+
+    write_profile(profile, output)
+    fa = profile.get("films_analyzed", 0)
+    fr = profile.get("total_frames_analyzed", 0)
+    pref = profile.get("preferred_framing", "?")
+    console.print(
+        f"[green]wrote[/green] {output} — {fa} films, {fr} frames, "
+        f"preferred framing [bold]{pref}[/bold]"
+    )
+
+
+@cli.command(name="score-clips")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option("--output", type=click.Path(path_type=Path), default=None,
+              help="Where to write clip-scores.json. Default: alongside clips.")
+@click.option("--shot-profile", "shot_profile_path",
+              type=click.Path(exists=True, path_type=Path),
+              default=DEFAULT_SHOT_PROFILE, show_default=True,
+              help="Path to shot-profile.json to score against.")
+@click.option("--detect-trims", is_flag=True,
+              help="Find usable portion of each clip (trim shaky/soft starts/ends).")
+@click.option("--samples-per-clip", type=int, default=5, show_default=True,
+              help="Frames sampled per clip for analysis.")
+@click.option("--scene-context", type=click.Path(exists=True, path_type=Path),
+              default=None,
+              help="JSON map {clip_filename: scene_label} for per-scene "
+                   "emotion weighting.")
+@click.option("--transcripts", type=click.Path(exists=True, path_type=Path),
+              default=None,
+              help="JSON map {clip_filename: transcript_obj} from WhisperX, "
+                   "for speech-bound trim detection.")
+def score_clips(path: Path, output: Path | None, shot_profile_path: Path,
+                detect_trims: bool, samples_per_clip: int,
+                scene_context: Path | None, transcripts: Path | None) -> None:
+    """Score raw footage clips against the learned shot profile."""
+    from .clip_scoring import score_directory, write_scores
+
+    if not shot_profile_path.exists():
+        raise click.ClickException(
+            f"no shot profile at {shot_profile_path}. "
+            "Run `film-style learn-shots` first."
+        )
+
+    profile = json.loads(shot_profile_path.read_text())
+    profile["path"] = str(shot_profile_path)
+
+    scene_map = json.loads(scene_context.read_text()) if scene_context else None
+    transcript_map = json.loads(transcripts.read_text()) if transcripts else None
+
+    if output is None:
+        if path.is_dir():
+            output = path / "clip-scores.json"
+        else:
+            output = path.with_name("clip-scores.json")
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[bold]{task.description}"),
+        BarColumn(),
+        TextColumn("{task.completed}/{task.total}"),
+        TimeElapsedColumn(),
+        console=console,
+    ) as progress:
+        task = progress.add_task("scoring clips", total=1)
+
+        def cb(seen: int, total: int, name: str) -> None:
+            progress.update(task, total=total, completed=seen,
+                            description=f"scoring {name}")
+
+        result = score_directory(
+            path, profile,
+            samples_per_clip=samples_per_clip,
+            detect_trims_flag=detect_trims,
+            scene_context=scene_map,
+            transcripts=transcript_map,
+            progress_cb=cb,
+        )
+
+    write_scores(result, output)
+    console.print(
+        f"[green]wrote[/green] {output} — {result['total_clips']} clips, "
+        f"{result['clips_rejected']} rejected"
+    )
 
 
 @cli.command()
