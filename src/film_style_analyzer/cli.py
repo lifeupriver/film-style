@@ -244,7 +244,8 @@ def guide(output: Path, profile_output: Path, model: str | None,
     console.print(f"[green]wrote[/green] {profile_output} ({len(profile.get('rules', []))} rules)")
 
     console.print(f"[bold]Aggregated[/bold] {stats['film_count']} films → calling Claude…")
-    md = write_guide(stats, pack, model=model)
+    md = write_guide(stats, pack, model=model,
+                     backend=getattr(cfg, "claude_backend", "api"))
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(md)
     console.print(f"[green]wrote[/green] {output}")

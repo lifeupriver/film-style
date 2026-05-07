@@ -28,6 +28,14 @@ class Config:
     # Active genre — partitions ~/.film-style-analyzer/<genre>/.
     default_genre: str = "wedding"
 
+    # How text-only LLM calls (guide writer, NotebookLM intro) reach Claude:
+    #   "api" = use Anthropic Python SDK (requires ANTHROPIC_API_KEY)
+    #   "cli" = shell out to the local `claude` Code CLI (uses your Claude
+    #           Pro/Max subscription quota; requires `claude` on PATH)
+    # Vision passes (--vision, --shot-sizes) still need "api" because the
+    # local CLI is text-only.
+    claude_backend: str = "api"
+
 
 def load(path: Path | None = None) -> Config:
     p = path or CONFIG_PATH

@@ -430,7 +430,8 @@ def tool_generate_guide(
     STATS_PATH.write_text(json.dumps(stats, indent=2, default=str))
 
     try:
-        md = write_guide(stats, pack, model=cfg.anthropic_model)
+        md = write_guide(stats, pack, model=cfg.anthropic_model,
+                         backend=getattr(cfg, "claude_backend", "api"))
         GUIDE_PATH.write_text(md)
         guide_status = "written"
     except Exception as e:
