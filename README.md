@@ -18,6 +18,19 @@ grade, shot composition, music tempo — and emits two artifacts:
    AI tools (e.g., assistants assembling rough cuts in your style via
    Claude Desktop / MCP).
 
+For shot-level work, two further commands turn the corpus's thumbnails
+into a learned compositional + emotional aesthetic and score raw footage
+clip-by-clip against it:
+
+3. **`shot-profile.json`** — written by `learn-shots`. Per-genre
+   distributions for framing, headroom, lead room, thirds, exposure,
+   sharpness, subject separation, and DeepFace emotion across every
+   thumbnail in the corpus.
+4. **`clip-scores.json`** — written by `score-clips`. A 0–100 score per
+   raw-footage clip with hard rejections, stacked soft penalties,
+   scene-aware emotion weighting, and optional stability- or
+   speech-bound trim points for downstream rough-cut assemblers.
+
 A bundled web dashboard renders the corpus visually, and an MCP server
 exposes the whole pipeline to Claude Desktop so you can ask Claude to
 *"analyze these commercials and tell me what's distinctive about this
@@ -62,6 +75,8 @@ override shipped packs of the same name. Existing wedding installs run
 | **Transitions** | Per-boundary classification: `hard_cut`, `dissolve`, `still_hold`, `fade_in`, `fade_out`. Detected by frame-gradient signature, not threshold heuristics. |
 | **Color & grade** | Per-clip k-means palette, mean luminance, contrast σ, warm/cool index, saturation. Aggregated to a corpus-wide tone label. |
 | **Shot mix** | Optional Claude-vision pass labels every clip as `wide` / `medium` / `close_up` / `insert` / `over_shoulder` / etc. |
+| **Shot composition** | MediaPipe + OpenCV pass over thumbnails: face count + size, body framing, head-cutoff, headroom %, lead room ratio, rule-of-thirds proximity, horizon tilt (Hough), exposure histogram, backlit detection, Laplacian sharpness, center-vs-edge subject separation, motion blur on subject. Aggregated into `shot-profile.json` by `learn-shots`. |
+| **Emotion** | DeepFace per-face emotion classification, weighted for wedding moments (happy ×1.0, surprise ×0.6, sad ×0.4 for happy tears; angry/fear/disgust penalized), with a multi-face crowd-reaction bonus and scene-aware weighting. |
 | **Audio design** | Music vs. speech-over-music vs. ambient classification (inaSpeechSegmenter). When does the first speech enter? How long do excerpts run? |
 | **Music** | Tempo (BPM), key, beat times, RMS energy curve, spectral centroid (librosa). Plus per-film cut-on-beat alignment scoring. |
 | **Scene structure** | Chapter detection from dissolve boundaries. Optional Claude-vision labelling (`ceremony`, `dancing`, `getting_ready`, …) with a feedback loop for corrections. |
@@ -93,6 +108,7 @@ pip install -e . --break-system-packages
 | `[vimeo]` | yt-dlp video download (Vimeo + YouTube) | `pip install -e '.[vimeo]'` |
 | `[gemini]` | Gemini-direct YouTube analysis (no download) | `pip install -e '.[gemini]'` |
 | `[mcp]` | Claude Desktop integration over MCP | `pip install -e '.[mcp]'` |
+| `[shots]` | MediaPipe + OpenCV + DeepFace for `learn-shots` and `score-clips` | `pip install -e '.[shots]'` |
 | `[audio]` | WhisperX transcription + inaSpeechSegmenter classification (heavy; needs Python 3.11–3.12) | `pip install -e '.[audio]'` |
 
 ### Environment variables
@@ -128,6 +144,13 @@ film-style match sarah-and-mike
 
 # 7. Export a NotebookLM-ingestion brief.
 film-style export-notebooklm
+
+# 8. Learn the editor's compositional + emotional preferences from the
+#    thumbnails of every analyzed film.
+film-style learn-shots                    # ~2-3 min for ~1500 thumbnails
+
+# 9. Score raw-footage proxies against the learned shot profile.
+film-style score-clips ~/footage/proxies/ --detect-trims
 ```
 
 ### Use your Claude Pro/Max subscription instead of API tokens
@@ -172,6 +195,8 @@ and writes labels back via `set_chapter_labels_bulk`. Same flow for
 | `match <stem>` | Find stylistically similar films in the archive |
 | `tag <stem> --set k=v` | Add per-wedding metadata (venue, season, music_genre, …) |
 | `predict-cuts <song>` | Predict cut points for a song; emit FCPXML marker track |
+| `learn-shots` | Build `shot-profile.json` from corpus thumbnails (composition + emotion) |
+| `score-clips <path>` | Score raw footage against `shot-profile.json`; optional trim detection |
 | `export-notebooklm` | Write a NotebookLM-ingestible markdown brief |
 | `serve` | Boot the dashboard at http://127.0.0.1:7421 |
 | `mcp-serve` | Run the MCP server (for Claude Desktop) |
@@ -276,6 +301,112 @@ Restart Claude Desktop. The toolset shows up under the connections menu.
 
 ---
 
+## Shot composition + emotion
+
+The corpus already produces frame-accurate thumbnails during `analyze`.
+`learn-shots` and `score-clips` reuse them to capture the *shot-level*
+choices an editor makes — what's in frame, where it sits, and the
+emotion on the subjects' faces — and to score raw footage against
+those preferences.
+
+### `learn-shots`
+
+Walks `~/.film-style-analyzer/<genre>/thumbs/<film>/` and runs every
+per-frame detector on every thumbnail:
+
+- **Faces & framing** — MediaPipe Face Detection. Body framing
+  (`extreme-close-up` … `wide`) inferred from face area refined by Pose
+  visibility (shoulders → hips → knees → ankles).
+- **Headroom** — distance from the top of the head (Face Mesh forehead
+  landmark) to the top of frame, as % of frame height. Ideal range
+  ~8–15%.
+- **Lead room** — direction of gaze from nose vs. eye-midline, ratio of
+  space on the looking side to space behind the head.
+- **Rule of thirds** — proximity of the primary face center to the
+  nearest thirds intersection, scored 0–1.
+- **Horizon tilt** — Hough line detection of strong architectural lines.
+  Only fires when straight lines are actually present, so meadow shots
+  aren't falsely flagged.
+- **Exposure** — mean brightness, shadow/midtone/highlight pcts, black
+  & white clipping, severity rating.
+- **Backlit** — face region brightness vs. background; flagged when
+  the face is 40 %+ darker than the surrounding frame.
+- **Sharpness** — Laplacian variance, rated `very-soft` / `soft` /
+  `acceptable` / `sharp` (calibrated for 720p).
+- **Subject separation** — center-region sharpness vs. edge sharpness;
+  higher ratio = more bokeh / shallower depth of field.
+- **Motion blur on subject** — face-region sharpness vs. background
+  sharpness; flags moving subjects in front of a steady camera.
+- **Emotion** — DeepFace per-face classifier with wedding weights:
+  happy ×1.0, surprise ×0.6, sad ×0.4 (happy-tears positive),
+  neutral 0, angry ×−0.5, fear ×−0.3, disgust ×−0.5. Multi-face
+  crowd-reaction bonus capped at +15.
+
+Aggregated to `~/.film-style-analyzer/shot-profile.json`. Computed
+fields include preferred framing, face-presence %, average headroom
+and headroom 10–90 percentile range, average thirds score, exposure
+range, dominant emotion distribution, and percent of frames at each
+emotion-intensity tier.
+
+```bash
+film-style learn-shots
+film-style learn-shots --films "sarah-and-mike,chen-williams"
+film-style learn-shots --force          # rebuild
+```
+
+### `score-clips`
+
+Scores raw 720p proxies against the learned profile. Per clip:
+
+1. Sample N evenly-spaced frames (default 5).
+2. Run every detector on each, plus optical-flow stability between
+   consecutive frames.
+3. Aggregate — **median** for composition (resilient to outliers),
+   **peak** for emotion (one genuine moment makes the clip worth
+   keeping).
+4. Apply hard rejections (severe over/under-exposure, fully out of
+   focus, head cut off the top of frame with a face present) → score 0.
+5. Apply stacked soft penalties (shake, soft focus, too tight or wide
+   crop, backlit, tilted horizon, poor headroom or lead room, low
+   subject separation, "shooting from behind").
+6. Compute the composite (50 baseline + composition + emotion +
+   penalties), clamped to 0–100.
+7. With `--detect-trims`, find the first stable+sharp frame from
+   start and last stable+sharp frame from end; or for clips with
+   transcript data, trim to 0.5 s before the first word and 1.0 s
+   after the last word.
+
+Scene-aware emotion weighting can be enabled by passing
+`--scene-context scene-map.json` — `ceremony`, `first_look`, and
+`speeches` get 1.5×, dancing gets 1.0×, B-roll and reception details
+get 0× so emotion doesn't influence whether a sunset is keeper-worthy.
+
+```bash
+film-style score-clips /path/to/proxies/ --detect-trims
+film-style score-clips /path/to/proxies/ --samples-per-clip 10
+film-style score-clips /path/to/single-clip.mp4
+film-style score-clips /path/to/proxies/ --scene-context scenes.json \
+                                          --transcripts transcripts.json
+```
+
+**Performance.** All analysis runs on CPU. `learn-shots` over a
+1,500-thumbnail corpus is ~2–3 minutes; `score-clips` on 247 clips at
+5 samples each is ~15–20 minutes (DeepFace dominates at ~200–400 ms
+per frame).
+
+**B-roll handling.** Clips where no person is detected skip the
+face/framing/headroom/lead-room/emotion detectors entirely. Sunsets,
+tablescapes, and other detail shots are scored only on exposure,
+sharpness, stability, and horizon tilt.
+
+**Camera-original mapping.** The default proxy → original mapping
+swaps `/02-proxies/` → `/01-camera-originals/` and replaces
+`_proxy.mp4` with `.MXF`. The `original` field of every clip record
+holds the resulting path so a downstream rough-cut tool can pull from
+the camera originals.
+
+---
+
 ## NotebookLM tie-in
 
 NotebookLM has no public API, but we've built two complementary ways to use
@@ -300,15 +431,21 @@ its underlying capabilities:
 ```
 ~/.film-style-analyzer/
 ├── config.json                    # user config
-├── analyses/<name>.json           # per-film analysis
-├── thumbs/<name>/clip_NNN.jpg     # per-clip thumbnails
-├── audio/<name>.wav               # extracted audio (auto-cleaned)
-├── inspirations.json              # YouTube references (analyze_youtube_via_gemini)
-├── aggregate-stats.json           # written during `guide`
-├── style-profile.json             # ⭐ the typed AI contract
-├── style-guide.md                 # the human-readable guide
-└── notebooklm-brief.md            # the NotebookLM source
+├── shot-profile.json              # ⭐ shared across genres — learned shot aesthetic
+├── <genre>/                       # per-genre workspace
+│   ├── analyses/<name>.json       # per-film analysis
+│   ├── thumbs/<name>/clip_NNN.jpg # per-clip thumbnails
+│   ├── audio/<name>.wav           # extracted audio (auto-cleaned)
+│   ├── inspirations.json          # YouTube references (analyze_youtube_via_gemini)
+│   ├── aggregate-stats.json       # written during `guide`
+│   ├── style-profile.json         # ⭐ the typed AI contract
+│   ├── style-guide.md             # the human-readable guide
+│   └── notebooklm-brief.md        # the NotebookLM source
 ```
+
+`clip-scores.json` is written next to the proxy footage being scored
+(or wherever `--output` points), not into the data root — that file
+belongs with the project, not the corpus.
 
 Everything is local. Nothing leaves your machine unless you explicitly call
 a tool that talks to Anthropic / Gemini / Vimeo / YouTube.
@@ -339,6 +476,64 @@ That's the artifact you point downstream Claude tools at when you say
 *"edit this video in my style"* — every key is typed, addressable, and
 traceable to source films.
 
+## What `shot-profile.json` looks like
+
+```jsonc
+{
+  "version": "1.0",
+  "films_analyzed": 15,
+  "total_frames_analyzed": 1472,
+  "framing_distribution": { "medium": 0.42, "close-up": 0.22, ... },
+  "preferred_framing": "medium",
+  "face_presence": { "frames_with_faces_pct": 72,
+                     "primary_face_avg_size_pct": 8.2,
+                     "facing_camera_pct": 89 },
+  "composition": { "avg_thirds_score": 0.68,
+                   "preferred_face_center_y": 0.35,
+                   "avg_headroom_pct": 11.2,
+                   "headroom_range": [6, 18] },
+  "exposure":  { "avg_brightness": 0.48, "brightness_range": [0.25, 0.72] },
+  "sharpness": { "avg_laplacian": 142.3, "min_laplacian_used": 45.0 },
+  "subject_separation": { "avg_center_to_edge_ratio": 2.4, "min_ratio_used": 1.1 },
+  "emotion_preferences": {
+    "avg_peak_emotion_in_finished_films": 45.2,
+    "pct_frames_with_emotion_above_20": 58,
+    "pct_frames_with_emotion_above_40": 31,
+    "dominant_emotions_distribution": { "happy": 0.48, "neutral": 0.32, ... }
+  },
+  "rejection_rules_learned": { "head_cutoff_pct": 0.3, ... }
+}
+```
+
+## What `clip-scores.json` looks like
+
+```jsonc
+{
+  "version": "1.0",
+  "total_clips": 247,
+  "clips_rejected": 18,
+  "score_distribution": { "90-100": 12, "80-89": 34, ..., "rejected": 18 },
+  "clips": [
+    {
+      "file": "card-A/CLIP0001_proxy.mp4",
+      "original": "01-camera-originals/card-A/CLIP0001.MXF",
+      "duration_sec": 12.4,
+      "score": 87,
+      "rejection": null,
+      "scene": "ceremony",
+      "analysis": { "framing": "medium", "faces_detected": 2,
+                    "thirds_score": 0.74, "exposure_rating": "good",
+                    "focus_rating": "sharp", "stability": "stable", ... },
+      "emotion":  { "peak_wedding_emotion": 62.5, "peak_emotion_type": "happy",
+                    "avg_wedding_emotion": 34.2, "emotional_frames_pct": 40.0 },
+      "penalties_applied": [],
+      "trim": { "trim_in_sec": 0.5, "trim_out_sec": 11.8,
+                "usable_duration_sec": 11.3, "reason": "shaky_start" }
+    }
+  ]
+}
+```
+
 ---
 
 ## Architecture
@@ -355,10 +550,13 @@ pip install -e '.[dev]' --break-system-packages
 pytest
 ```
 
-100+ unit tests covering schema validity, aggregation, transition
+250+ unit tests covering schema validity, aggregation, transition
 classification, profile generation, MCP tool dispatch, dashboard endpoints,
 matchmaker similarity, predict-cuts, NotebookLM brief, metadata tagging,
-and FCPXML parsing.
+FCPXML parsing, and the full shot-composition / emotion / scoring stack
+(framing, headroom, lead room, thirds, exposure, sharpness, subject
+separation, motion blur, optical flow, emotion weighting, scene
+weighting, hard rejections, soft penalties, and trim detection).
 
 For real-media smoke tests, drop a 30-second video in `tests/fixtures/` and
 run `pytest --real-media tests/fixtures/sample.mp4`.

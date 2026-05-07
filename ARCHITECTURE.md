@@ -26,6 +26,15 @@ src/film_style_analyzer/
 ├── color_analysis.py         # k-means palette + warmth + exposure + contrast
 ├── shot_size.py              # Claude vision per-clip composition labels
 ├── vision_classify.py        # Claude vision chapter scene types + few-shot loop
+├── composition.py            # MediaPipe + OpenCV per-frame detectors
+│                             #   (faces, framing, headroom, lead room, thirds,
+│                             #   horizon tilt, exposure, sharpness, subject
+│                             #   separation, motion blur, optical flow)
+├── emotion.py                # DeepFace wrapper, wedding-weighted scoring,
+│                             #   per-clip peak aggregation, scene weights
+├── shot_profile.py           # Aggregator for shot-profile.json (`learn-shots`)
+├── clip_scoring.py           # Hard rejections, soft penalties, composite
+│                             #   scoring, trim detection (`score-clips`)
 ├── genre_pack.py             # GenrePack dataclass + TOML loader
 ├── genre_packs/              # shipped TOML packs (wedding, commercial, ...)
 │
@@ -47,7 +56,7 @@ src/film_style_analyzer/
     ├── css/main.css
     └── js/{app,views,charts,markdown,timeline}.js
 
-tests/                        # 100+ unit tests
+tests/                        # 250+ unit tests
 ```
 
 ## Genre packs
@@ -117,6 +126,36 @@ shipped packs of the same name. The active genre comes from
   film-style export-notebooklm  ──►  notebooklm_export.py    (paste-bridge)
 ```
 
+### Shot-learning + scoring (parallel pipeline)
+
+`learn-shots` consumes the same thumbnails the analyzer wrote;
+`score-clips` consumes raw 720p proxies plus the learned profile.
+
+```
+  ~/.film-style-analyzer/<genre>/thumbs/<film>/clip_NNN.jpg
+            │
+            ▼
+   ┌──────────────────┐
+   │  composition.py  │   per-frame: faces, framing, headroom, lead room,
+   │  emotion.py      │   thirds, horizon, exposure, sharpness, separation,
+   └──────────────────┘   motion blur, DeepFace emotion
+            │
+            ▼
+   ┌──────────────────┐
+   │  shot_profile.py │──► ~/.film-style-analyzer/shot-profile.json
+   └──────────────────┘
+            │
+            ▼
+   ┌──────────────────┐
+   │  clip_scoring.py │   sample N frames per clip → median composition,
+   │                  │   peak emotion → hard rejections + soft penalties
+   │                  │   → composite 0–100, optional trim window
+   └──────────────────┘
+            │
+            ▼
+       <project>/clip-scores.json   (consumed by rough-cut assemblers)
+```
+
 ## Key design decisions
 
 **Why `style-profile.json` AND `style-guide.md`?** They serve different
@@ -167,6 +206,44 @@ underlying engine (Gemini) for direct YouTube URL analysis when you don't
 want to download. See `notebooklm_export.py` and
 `gemini_analyzer.analyze_youtube_url`.
 
+**Why MediaPipe + OpenCV + DeepFace for shot composition?** The Claude
+vision pass already produces shot-size labels (`shot_size.py`) — that
+answers "what kind of shot is this?". `composition.py` answers a
+different question: "*how* well-composed is this exact frame?" — and it
+needs to do that across thousands of thumbnails per corpus and tens of
+thousands of sampled raw-footage frames per project. A vision API call
+per frame would be prohibitive on cost and latency; CPU-only MediaPipe +
+OpenCV runs in ~50–100 ms per frame and gives frame-precise numerical
+metrics (headroom %, thirds score, Laplacian variance, horizon angle).
+DeepFace provides the same coverage for emotion. See `composition.py`
+and `emotion.py`.
+
+**Why median for composition, peak for emotion?** A clip's composition
+should be judged by what most of it looks like — a single soft sample
+shouldn't tank an otherwise-sharp clip. Emotion is the opposite: in a
+10-second cutaway, one half-second of genuine reaction is the entire
+reason the clip is useful. Aggregating with median for composition and
+max for emotion encodes that asymmetry directly. See
+`clip_scoring.aggregate_clip_frames` and `emotion.aggregate_clip_emotions`.
+
+**Why hard rejections + stacking soft penalties instead of a single
+score?** Hard rejections (severe over/under-exposure, head cut off the
+top of frame, fully out of focus) are deal-breakers — no amount of
+emotional content makes those clips usable. Soft penalties (mild shake,
+slight tilt, off-preferred framing) reduce desirability but shouldn't
+eliminate. Two-tier scoring keeps that distinction explicit and lets the
+penalty ledger appear in the JSON for downstream tools that want to
+explain *why* a clip ranked where it did. See
+`clip_scoring.HARD_REJECTIONS` and `clip_scoring.collect_penalties`.
+
+**Why is `shot-profile.json` outside the per-genre subfolders?**
+Composition and emotion are properties of the editor's eye, not the
+genre. A wedding editor's preferred headroom and thirds proximity carry
+over to commercial work. Keeping the shot profile at the data-root level
+lets one corpus inform clip scoring across multiple genres if the editor
+chooses. (The genre-specific style profile in `<genre>/style-profile.json`
+remains the authoritative pacing/transition/audio contract.)
+
 ## Schemas
 
 Top-level types in `schemas.py`:
@@ -184,6 +261,10 @@ Aggregated/derived structures (not Pydantic, just dict-shaped):
 - `style-guide.md` — Claude-written prose
 - `inspirations.json` — saved YouTube reference analyses
 - `notebooklm-brief.md` — paste-ready NotebookLM source
+- `shot-profile.json` — learned compositional + emotional preferences
+  (`shot_profile.aggregate_frames`)
+- `clip-scores.json` — per-clip composite scores, penalties, and trim
+  points for raw footage (`clip_scoring.score_directory`)
 
 ## Known limits
 
@@ -207,3 +288,13 @@ Aggregated/derived structures (not Pydantic, just dict-shaped):
 
 - **Gemini YouTube URL analysis** requires `GOOGLE_API_KEY` and consumes
   Gemini API tokens. ~30 seconds and $0.05–0.15 per video.
+
+- **Shot composition + emotion** require the `[shots]` extras
+  (`mediapipe`, `opencv-python`, `numpy`, `deepface`). All run on CPU.
+  DeepFace dominates `score-clips` runtime at ~200–400 ms per frame —
+  budget ~15–20 minutes for 247 clips at 5 samples each. The MediaPipe
+  detectors are lazy-imported, so the unit suite (which uses synthetic
+  frames + stubbed detection results) runs without these extras
+  installed. The shot-profile / clip-score files are written outside
+  the per-genre subfolders because composition and emotion are
+  properties of the editor's eye, not of any one genre.
