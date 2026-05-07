@@ -177,6 +177,134 @@ def tool_set_film_metadata(stem: str, metadata: dict[str, str | None]) -> dict[s
     return {"stem": stem, "metadata": a.metadata}
 
 
+def _active_pack():
+    """Resolve the active genre pack for label validation."""
+    from .config import load as _load_cfg
+    from .genre_pack import load as _load_pack
+    return _load_pack(getattr(_load_cfg(), "default_genre", "wedding"))
+
+
+def tool_get_unlabeled_chapter_thumbnails(stem: str, max_chapters: int = 12) -> dict[str, Any]:
+    """Return file-path metadata for up to `max_chapters` unlabeled chapter
+    thumbnails. The MCP wrapper turns this into a list of image content
+    blocks Claude can see; callers without MCP image support still get the
+    paths and can read them with their own tools."""
+    a = _load_film(stem)
+    pending = [c for c in a.chapters if not c.label and c.representative_thumbnail]
+    batch = pending[:max_chapters]
+    return {
+        "stem": stem,
+        "chapters": [
+            {
+                "chapter_index": c.index,
+                "start_sec": c.start_sec,
+                "end_sec": c.end_sec,
+                "duration_sec": c.duration_sec,
+                "thumbnail_path": str((DATA_ROOT / c.representative_thumbnail).resolve()),
+            }
+            for c in batch
+        ],
+        "remaining_after_batch": max(0, len(pending) - len(batch)),
+        "valid_labels": list(_active_pack().scene_labels),
+    }
+
+
+def tool_set_chapter_labels_bulk(stem: str, labels: dict) -> dict[str, Any]:
+    """Apply chapter labels in bulk. `labels` maps chapter_index → label
+    (or None to clear). Invalid labels are recorded in `skipped` and don't
+    abort the rest of the batch."""
+    a = _load_film(stem)
+    valid = set(_active_pack().scene_labels)
+    written = 0
+    skipped: list[dict] = []
+    for idx_key, label in labels.items():
+        try:
+            idx = int(idx_key)
+        except (TypeError, ValueError):
+            skipped.append({"index": idx_key, "reason": "non-integer key"})
+            continue
+        if idx < 0 or idx >= len(a.chapters):
+            skipped.append({"index": idx, "reason": f"out of range (have {len(a.chapters)})"})
+            continue
+        if label is not None:
+            label = str(label).strip().lower().replace(" ", "_")
+            if label not in valid:
+                skipped.append({"index": idx, "reason": f"invalid label {label!r}"})
+                continue
+        a.chapters[idx].label = label
+        written += 1
+    target = ANALYSES_DIR / f"{_safe_stem(stem)}.json"
+    target.write_text(a.model_dump_json(indent=2))
+    return {
+        "stem": stem,
+        "labels_applied": written,
+        "skipped": skipped,
+        "remaining_unlabeled": sum(1 for c in a.chapters if not c.label),
+    }
+
+
+def tool_get_unlabeled_clip_thumbnails(stem: str, start_index: int = 0,
+                                        batch_size: int = 12) -> dict[str, Any]:
+    """Return paths for up to `batch_size` unlabeled clip thumbnails starting
+    from `start_index` (clip index, not list position). Used for shot-size
+    labeling."""
+    a = _load_film(stem)
+    pending = [c for c in a.cuts.clips
+               if not c.shot_size and c.thumbnail and c.index >= start_index]
+    batch = pending[:batch_size]
+    return {
+        "stem": stem,
+        "clips": [
+            {
+                "clip_index": c.index,
+                "start_sec": c.start_sec,
+                "end_sec": c.end_sec,
+                "duration_sec": c.duration_sec,
+                "thumbnail_path": str((DATA_ROOT / c.thumbnail).resolve()),
+            }
+            for c in batch
+        ],
+        "remaining_after_batch": max(
+            0,
+            sum(1 for c in a.cuts.clips if not c.shot_size and c.thumbnail) - len(batch),
+        ),
+        "valid_shot_labels": list(_active_pack().shot_labels),
+    }
+
+
+def tool_set_shot_sizes_bulk(stem: str, sizes: dict) -> dict[str, Any]:
+    """Apply per-clip shot sizes in bulk. `sizes` maps clip_index → shot
+    label (or None to clear)."""
+    a = _load_film(stem)
+    valid = set(_active_pack().shot_labels)
+    written = 0
+    skipped: list[dict] = []
+    for idx_key, sz in sizes.items():
+        try:
+            idx = int(idx_key)
+        except (TypeError, ValueError):
+            skipped.append({"index": idx_key, "reason": "non-integer key"})
+            continue
+        if idx < 0 or idx >= len(a.cuts.clips):
+            skipped.append({"index": idx, "reason": f"out of range (have {len(a.cuts.clips)})"})
+            continue
+        if sz is not None:
+            sz = str(sz).strip().lower().replace(" ", "_")
+            if sz not in valid:
+                skipped.append({"index": idx, "reason": f"invalid shot label {sz!r}"})
+                continue
+        a.cuts.clips[idx].shot_size = sz
+        written += 1
+    target = ANALYSES_DIR / f"{_safe_stem(stem)}.json"
+    target.write_text(a.model_dump_json(indent=2))
+    return {
+        "stem": stem,
+        "sizes_applied": written,
+        "skipped": skipped,
+        "remaining_unlabeled": sum(1 for c in a.cuts.clips if not c.shot_size),
+    }
+
+
 def tool_set_chapter_label(stem: str, chapter_index: int,
                            label: str | None) -> dict[str, Any]:
     """Correct a chapter's scene label. The vision pass uses these
@@ -1088,6 +1216,90 @@ def build_server():
         the vision pass picks these up as few-shot examples on next run.
         Pass label=null to clear."""
         return tool_set_chapter_label(stem, chapter_index, label)
+
+    @mcp.tool()
+    def get_chapter_thumbnails_to_label(stem: str, max_chapters: int = 12):
+        """Return image content blocks for up to `max_chapters` UNLABELED
+        chapters of `stem`. Look at each image and decide a wedding-genre
+        scene label, then call `set_chapter_labels_bulk` with the mapping.
+
+        This is the Claude-Pro/Max-subscription path: vision passes happen
+        in chat (you, the assistant, see the thumbnails) instead of via the
+        Anthropic API. Use it to label your own corpus without consuming
+        API tokens."""
+        from mcp.server.fastmcp.utilities.types import Image as MCPImage
+        info = tool_get_unlabeled_chapter_thumbnails(stem, max_chapters=max_chapters)
+        out: list = [
+            f"Film: {info['stem']}",
+            f"Showing {len(info['chapters'])} unlabeled chapter(s); "
+            f"{info['remaining_after_batch']} remaining after this batch.",
+            f"Valid labels: {', '.join(info['valid_labels'])}",
+        ]
+        for ch in info["chapters"]:
+            out.append(
+                f"--- chapter_index={ch['chapter_index']} "
+                f"(t={ch['start_sec']:.1f}s, dur={ch['duration_sec']:.1f}s) ---"
+            )
+            try:
+                out.append(MCPImage(path=ch["thumbnail_path"]))
+            except Exception as e:
+                out.append(f"[failed to load thumbnail: {e}]")
+        out.append(
+            "Now call set_chapter_labels_bulk(stem=..., labels={chapter_index: label, ...}) "
+            "to write your decisions back."
+        )
+        return out
+
+    @mcp.tool()
+    def set_chapter_labels_bulk(stem: str, labels: dict) -> dict:
+        """Apply many chapter labels at once. `labels` maps chapter_index
+        (int) → scene label (str), or chapter_index → null to clear.
+
+        Used after `get_chapter_thumbnails_to_label` — look at the images
+        you got back, then send the bulk label dict here. Validates each
+        label against the active genre pack's scene_labels; invalid ones
+        are listed in the response's `skipped` array but don't abort the
+        rest of the batch."""
+        return tool_set_chapter_labels_bulk(stem, labels)
+
+    @mcp.tool()
+    def get_clip_thumbnails_to_label_shots(stem: str, start_index: int = 0,
+                                            batch_size: int = 12):
+        """Return image content blocks for up to `batch_size` UNLABELED clip
+        thumbnails of `stem`, starting at clip index `start_index`. Look at
+        each, decide a shot size from the pack's shot_labels, then call
+        `set_shot_sizes_bulk` with the mapping. Iterate via `start_index` to
+        cover the full film."""
+        from mcp.server.fastmcp.utilities.types import Image as MCPImage
+        info = tool_get_unlabeled_clip_thumbnails(
+            stem, start_index=start_index, batch_size=batch_size,
+        )
+        out: list = [
+            f"Film: {info['stem']}",
+            f"Showing {len(info['clips'])} unlabeled clip(s); "
+            f"{info['remaining_after_batch']} remaining after this batch.",
+            f"Valid shot labels: {', '.join(info['valid_shot_labels'])}",
+        ]
+        for c in info["clips"]:
+            out.append(
+                f"--- clip_index={c['clip_index']} "
+                f"(t={c['start_sec']:.1f}s, dur={c['duration_sec']:.2f}s) ---"
+            )
+            try:
+                out.append(MCPImage(path=c["thumbnail_path"]))
+            except Exception as e:
+                out.append(f"[failed to load thumbnail: {e}]")
+        out.append(
+            "Now call set_shot_sizes_bulk(stem=..., sizes={clip_index: label, ...})."
+        )
+        return out
+
+    @mcp.tool()
+    def set_shot_sizes_bulk(stem: str, sizes: dict) -> dict:
+        """Apply many per-clip shot sizes at once. `sizes` maps clip_index
+        (int) → shot label (str), or clip_index → null to clear. Validates
+        each label against the active pack's shot_labels."""
+        return tool_set_shot_sizes_bulk(stem, sizes)
 
     @mcp.tool()
     def compare_fcpxml(fcpxml_content: str | None = None,
