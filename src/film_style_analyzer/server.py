@@ -91,7 +91,15 @@ def _film_summary(a: FilmAnalysis) -> dict:
 
 
 def _slug_safe(name: str) -> bool:
-    return bool(re.match(r"^[A-Za-z0-9._\-]+$", name))
+    """Allow filename-style stems (letters, digits, spaces, common punct)
+    but block path traversal and control chars. Real-world wedding-film
+    deliverables often contain spaces, apostrophes, parens, ampersands."""
+    if not name or name.startswith(".") or "/" in name or "\\" in name:
+        return False
+    if ".." in name:
+        return False
+    # Reject control chars + a few path-meaningful ones.
+    return not bool(re.search(r"[\x00-\x1f<>:|?*]", name))
 
 
 # ---------- request handler -------------------------------------------------
