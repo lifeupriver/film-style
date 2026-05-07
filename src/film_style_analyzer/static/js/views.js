@@ -1726,6 +1726,250 @@ export function renderShotProfile(payload) {
   return page;
 }
 
+// ------------ hand-off -----------------------------------------------------
+
+function fmtBytes(n) {
+  if (!n && n !== 0) return "—";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  return `${(n / 1024 / 1024).toFixed(2)} MB`;
+}
+
+const HANDOFF_GROUPS = [
+  {
+    key: "shot-profile.json",
+    label: "Shot profile",
+    note: "Composition + emotion preferences. Used to choose clips.",
+    match: (p) => p === "shot-profile.json",
+  },
+  {
+    key: "style-guide.md",
+    label: "Style guide",
+    note: "Narrative editing manual.",
+    match: (p) => p === "style-guide.md",
+  },
+  {
+    key: "style-profile.json",
+    label: "Style profile",
+    note: "Programmatic counterpart to the guide.",
+    match: (p) => p === "style-profile.json",
+  },
+  {
+    key: "aggregate-stats.json",
+    label: "Aggregate stats",
+    note: "Pacing, transition mix, structural beats.",
+    match: (p) => p === "aggregate-stats.json",
+  },
+  {
+    key: "analyses/",
+    label: "Per-film analyses",
+    note: "Frame-accurate breakdowns. Worked examples.",
+    match: (p) => p.startsWith("analyses/"),
+  },
+  {
+    key: "edit-craft/",
+    label: "Edit-craft library",
+    note: "Editor-curated reference patterns.",
+    match: (p) => p.startsWith("edit-craft/"),
+  },
+];
+
+function groupHandoffFiles(files) {
+  const out = [];
+  for (const g of HANDOFF_GROUPS) {
+    const items = files.filter((f) => g.match(f.path));
+    if (!items.length) continue;
+    const totalBytes = items.reduce((s, f) => s + (f.size || 0), 0);
+    out.push({
+      ...g,
+      items,
+      count: items.length,
+      bytes: totalBytes,
+    });
+  }
+  // Surface anything unclassified at the end so we never silently drop files.
+  const claimed = new Set(out.flatMap((g) => g.items.map((i) => i.path)));
+  const orphans = files.filter((f) => !claimed.has(f.path));
+  if (orphans.length) {
+    out.push({
+      key: "_other",
+      label: "Other",
+      note: "",
+      items: orphans,
+      count: orphans.length,
+      bytes: orphans.reduce((s, f) => s + (f.size || 0), 0),
+    });
+  }
+  return out;
+}
+
+export function renderHandoff(payload) {
+  const page = el("div", { class: "page page--handoff" });
+
+  page.appendChild(
+    el("section", { class: "hero" }, [
+      el("p", { class: "hero__kicker" }, ["Hand-off"]),
+      (() => {
+        const h = el("h1", { class: "hero__display" });
+        h.appendChild(document.createTextNode("Everything Claude needs, "));
+        h.appendChild(el("em", {}, ["in one bundle"]));
+        h.appendChild(document.createTextNode("."));
+        return h;
+      })(),
+      el("p", { class: "hero__lede" }, [
+        "One zip with the shot profile, style guide, aggregate stats, ",
+        "every per-film analysis, and the edit-craft library — plus a ",
+        "README addressed to the model. Drop it into a context window or ",
+        "vector store and the model has the full picture.",
+      ]),
+    ])
+  );
+
+  if (!payload?.exists) {
+    page.appendChild(
+      el("section", { class: "state" }, [
+        el("p", { class: "state__kicker" }, ["Nothing to hand off yet"]),
+        el("p", { class: "state__title" }, ["The archive is empty."]),
+        el("p", { class: "state__lede" }, [
+          "Analyse some films and run ",
+          el("code", {}, ["learn-shots"]),
+          " first.",
+        ]),
+      ])
+    );
+    return page;
+  }
+
+  // ---- big download CTA ----
+  const downloadBtn = el(
+    "a",
+    {
+      class: "handoff-download",
+      href: "/api/handoff.zip",
+      download: "",
+    },
+    [
+      el("span", { class: "handoff-download__kicker" }, [
+        "Download bundle",
+      ]),
+      el("span", { class: "handoff-download__title" }, [
+        `${payload.file_count} files · ${fmtBytes(payload.total_bytes)}`,
+      ]),
+      el("span", { class: "handoff-download__hint" }, [
+        "Includes auto-generated README.md addressed to the model →",
+      ]),
+    ]
+  );
+
+  page.appendChild(
+    el("section", { class: "handoff-cta" }, [downloadBtn])
+  );
+
+  // ---- manifest by group ----
+  const groups = groupHandoffFiles(payload.files || []);
+
+  page.appendChild(
+    el("section", {}, [
+      el("header", { class: "section-rule" }, [
+        el("span", { class: "section-rule__plate" }, ["Manifest"]),
+        el("span", { class: "section-rule__title" }, ["What's inside"]),
+        el("span", { class: "section-rule__line" }),
+      ]),
+      el(
+        "div",
+        { class: "handoff-groups" },
+        groups.map((g) =>
+          el("article", { class: "handoff-group" }, [
+            el("header", { class: "handoff-group__header" }, [
+              el("h3", { class: "handoff-group__title" }, [g.label]),
+              el("span", { class: "handoff-group__meta" }, [
+                `${g.count} ${g.count === 1 ? "file" : "files"} · ${fmtBytes(g.bytes)}`,
+              ]),
+            ]),
+            g.note
+              ? el("p", { class: "handoff-group__note" }, [g.note])
+              : null,
+            g.count <= 12
+              ? el(
+                  "ul",
+                  { class: "handoff-filelist" },
+                  g.items.map((f) =>
+                    el("li", {}, [
+                      el("span", { class: "handoff-filelist__path" }, [
+                        f.path,
+                      ]),
+                      el("span", { class: "handoff-filelist__size" }, [
+                        fmtBytes(f.size),
+                      ]),
+                    ])
+                  )
+                )
+              : el(
+                  "details",
+                  { class: "handoff-filelist-details" },
+                  [
+                    el(
+                      "summary",
+                      {},
+                      [`Show all ${g.count} files`]
+                    ),
+                    el(
+                      "ul",
+                      { class: "handoff-filelist" },
+                      g.items.map((f) =>
+                        el("li", {}, [
+                          el(
+                            "span",
+                            { class: "handoff-filelist__path" },
+                            [f.path]
+                          ),
+                          el(
+                            "span",
+                            { class: "handoff-filelist__size" },
+                            [fmtBytes(f.size)]
+                          ),
+                        ])
+                      )
+                    ),
+                  ]
+                ),
+          ])
+        )
+      ),
+    ])
+  );
+
+  // ---- usage hint ----
+  page.appendChild(
+    el("section", {
+      style: {
+        marginTop: "3rem",
+        paddingTop: "1.5rem",
+        borderTop: "1px solid color-mix(in srgb, var(--ink-3) 25%, transparent)",
+        fontFamily: "var(--mono)",
+        fontSize: "0.7rem",
+        letterSpacing: "0.16em",
+        textTransform: "uppercase",
+        color: "var(--ink-3)",
+        lineHeight: 1.7,
+      },
+    }, [
+      el("p", {}, [
+        `Genre: ${payload.genre || "—"} · ${payload.file_count} files · ${fmtBytes(payload.total_bytes)} compressed (~30% smaller after deflate).`,
+      ]),
+      el("p", { style: { marginTop: "0.5rem" } }, [
+        "Re-run ",
+        el("code", {}, ["learn-shots"]),
+        " or ",
+        el("code", {}, ["guide"]),
+        " before downloading to refresh.",
+      ]),
+    ])
+  );
+
+  return page;
+}
+
 // ------------ compare ------------------------------------------------------
 
 export function renderCompareIntro() {

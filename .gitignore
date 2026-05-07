@@ -24,3 +24,4 @@ dist/
 tests/fixtures/*.mp4
 tests/fixtures/*.mov
 .claude/
+.playwright-mcp/
