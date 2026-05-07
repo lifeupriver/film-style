@@ -1967,3 +1967,168 @@ main {
   padding: 0;
   color: inherit;
 }
+
+/* ----- hand-off ----------------------------------------------------------- */
+
+.handoff-cta {
+  margin: 2.5rem 0 3rem;
+}
+
+.handoff-download {
+  display: grid;
+  gap: 0.4rem;
+  padding: 2rem 2.25rem;
+  border: 1px solid var(--amber-deep);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--amber) 14%, var(--surface)) 0%,
+    var(--surface) 100%
+  );
+  text-decoration: none;
+  color: var(--ink);
+  border-radius: 4px;
+  transition: border-color 0.18s var(--ease-out),
+    background 0.18s var(--ease-out),
+    transform 0.12s var(--ease-out);
+  box-shadow: var(--shadow-1);
+}
+
+.handoff-download:hover,
+.handoff-download:focus-visible {
+  border-color: var(--amber);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--amber) 22%, var(--surface)) 0%,
+    color-mix(in srgb, var(--amber) 6%, var(--surface)) 100%
+  );
+  outline: none;
+  transform: translateY(-1px);
+}
+
+.handoff-download__kicker {
+  font-family: var(--mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--amber-soft);
+}
+
+.handoff-download__title {
+  font-family: var(--serif);
+  font-size: 1.6rem;
+  font-weight: 400;
+  letter-spacing: -0.005em;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.handoff-download__hint {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.12em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+}
+
+.handoff-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  gap: 1.5rem;
+  margin-top: 1.5rem;
+}
+
+.handoff-group {
+  border: var(--rule-soft);
+  background: var(--surface);
+  padding: 1.25rem 1.4rem 1.4rem;
+  border-radius: 4px;
+}
+
+.handoff-group__header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.4rem;
+}
+
+.handoff-group__title {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  font-weight: 500;
+  color: var(--ink);
+  letter-spacing: -0.005em;
+}
+
+.handoff-group__meta {
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.14em;
+  color: var(--ink-mute);
+  text-transform: uppercase;
+  font-variant-numeric: tabular-nums;
+}
+
+.handoff-group__note {
+  margin: 0 0 0.85rem;
+  font-family: var(--serif);
+  font-size: 0.92rem;
+  font-style: italic;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+
+.handoff-filelist {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-family: var(--mono);
+  font-size: 0.72rem;
+}
+
+.handoff-filelist li {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 1rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px dotted color-mix(in srgb, var(--ink-faint) 70%, transparent);
+}
+
+.handoff-filelist li:last-child {
+  border-bottom: 0;
+}
+
+.handoff-filelist__path {
+  color: var(--ink-2);
+  letter-spacing: 0.02em;
+  word-break: break-all;
+}
+
+.handoff-filelist__size {
+  color: var(--ink-mute);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.handoff-filelist-details {
+  margin-top: 0.5rem;
+}
+
+.handoff-filelist-details summary {
+  cursor: pointer;
+  font-family: var(--mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--amber-soft);
+  padding: 0.4rem 0;
+}
+
+.handoff-filelist-details[open] summary {
+  margin-bottom: 0.5rem;
+}

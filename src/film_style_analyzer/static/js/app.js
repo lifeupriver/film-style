@@ -7,6 +7,7 @@ import {
   renderGuide,
   renderCraft,
   renderShotProfile,
+  renderHandoff,
   renderCompareIntro,
   renderCompareResult,
   renderSettings,
@@ -63,6 +64,7 @@ const ROUTES = [
   { test: /^\/guide\/?$/, name: "/guide", render: viewGuide },
   { test: /^\/shot-profile\/?$/, name: "/shot-profile", render: viewShotProfile },
   { test: /^\/craft(?:\/.*)?$/, name: "/craft", render: viewCraft },
+  { test: /^\/handoff\/?$/, name: "/handoff", render: viewHandoff },
   { test: /^\/compare\/?$/, name: "/compare", render: viewCompare },
   { test: /^\/settings\/?$/, name: "/settings", render: viewSettings },
 ];
@@ -179,6 +181,16 @@ async function viewShotProfile() {
     profile: null,
   }));
   return renderShotProfile(payload);
+}
+
+async function viewHandoff() {
+  const payload = await api("/api/handoff").catch(() => ({
+    exists: false,
+    files: [],
+    file_count: 0,
+    total_bytes: 0,
+  }));
+  return renderHandoff(payload);
 }
 
 async function viewCompare() {

@@ -174,6 +174,257 @@ def _zip_directory(d: Path) -> bytes:
     return buf.getvalue()
 
 
+# ---------- hand-off bundle -------------------------------------------------
+
+
+def _handoff_sources() -> list[tuple[str, Path]]:
+    """Return [(arcname, path)] for every individual file shipped in the
+    hand-off bundle. Directories (edit-craft, analyses) are walked
+    separately by _build_handoff_zip."""
+    out: list[tuple[str, Path]] = []
+    if SHOT_PROFILE_PATH.is_file():
+        out.append(("shot-profile.json", SHOT_PROFILE_PATH))
+    sg = GUIDE_PATH
+    if sg.is_file():
+        out.append(("style-guide.md", sg))
+    sp = _GENRE_ROOT / "style-profile.json"
+    if sp.is_file():
+        out.append(("style-profile.json", sp))
+    if STATS_PATH.is_file():
+        out.append(("aggregate-stats.json", STATS_PATH))
+    return out
+
+
+def _handoff_manifest() -> dict:
+    """Snapshot of what /api/handoff.zip would contain.
+
+    Returns counts, total size, and a flat file list (for the dashboard
+    to render before download)."""
+    files: list[dict] = []
+
+    def add(arc: str, p: Path) -> None:
+        try:
+            size = p.stat().st_size
+        except OSError:
+            return
+        files.append({"path": arc, "size": size})
+
+    for arc, p in _handoff_sources():
+        add(arc, p)
+
+    if EDIT_CRAFT_DIR.is_dir():
+        for p in sorted(EDIT_CRAFT_DIR.rglob("*")):
+            if p.is_file():
+                rel = p.relative_to(EDIT_CRAFT_DIR).as_posix()
+                add(f"edit-craft/{rel}", p)
+
+    if ANALYSES_DIR.is_dir():
+        for p in sorted(ANALYSES_DIR.glob("*.json")):
+            add(f"analyses/{p.name}", p)
+
+    total = sum(f["size"] for f in files)
+    return {
+        "exists": bool(files),
+        "files": files,
+        "file_count": len(files),
+        "total_bytes": total,
+        "genre": _active_genre_at_import(),
+    }
+
+
+def _handoff_readme(brand: str, genre: str, profile: dict | None,
+                    stats: dict | None, film_count: int,
+                    edit_craft_files: int) -> str:
+    """Auto-generated README addressed to a downstream LLM editor.
+
+    Concrete numbers come from the live data so the bundle is
+    self-describing without anyone having to re-explain it."""
+    bits: list[str] = []
+    bits.append(f"# {brand or 'Editor'} — Style Hand-off")
+    bits.append("")
+    bits.append(
+        "This bundle contains everything an AI editor needs to (a) cull "
+        "raw footage in this editor's voice and (b) assemble it into a "
+        "finished film matching their style."
+    )
+    bits.append("")
+    bits.append(f"Genre: **{genre}**.")
+    if film_count:
+        bits.append(f"Compiled from **{film_count} finished films**.")
+    if profile:
+        frames = profile.get("total_frames_analyzed")
+        pref = profile.get("preferred_framing")
+        if frames:
+            bits.append(
+                f"Composition learned from **{frames:,} kept frames**, "
+                f"preferred framing: **{pref}**."
+            )
+    bits.append("")
+    bits.append("## Workflow")
+    bits.append("")
+    bits.append(
+        "1. **Cull raw clips with `shot-profile.json`.** Apply "
+        "`rejection_rules_learned` as hard filters first (e.g. "
+        "very-soft focus below the laplacian floor, severe under/"
+        "overexposure, head cut-off). Then score remaining clips "
+        "against `framing_distribution`, `composition`, "
+        "`subject_separation`, and `emotion_preferences`. Higher "
+        "alignment = stronger candidate."
+    )
+    bits.append(
+        "2. **Read `style-guide.md`** for the editing voice — pacing, "
+        "transitions, structure, audio philosophy. This is the "
+        "narrative manual."
+    )
+    bits.append(
+        "3. **Use `aggregate-stats.json`** for numeric targets: "
+        "average clip duration, the decile-by-decile pacing curve, "
+        "the transition mix, structural beat lengths."
+    )
+    bits.append(
+        "4. **Treat `analyses/` as worked examples.** Each JSON is a "
+        "frame-accurate breakdown of a finished film: clip durations, "
+        "transitions, audio events, color, shot descriptions. When in "
+        "doubt about a beat, find a similar film and mirror it."
+    )
+    bits.append(
+        "5. **Pull from `edit-craft/`** for the editor's curated "
+        "library of reusable patterns — coverage checklists, scene "
+        "templates, sequence grammar, voice notes."
+    )
+    bits.append("")
+    bits.append("## Files")
+    bits.append("")
+    if profile:
+        bits.append(
+            "- `shot-profile.json` — composition + emotion preferences. "
+            "Output of `film-style learn-shots`. **Use to choose clips.**"
+        )
+    if (GUIDE_PATH).is_file():
+        bits.append(
+            "- `style-guide.md` — narrative editing manual. **Use for "
+            "editorial voice.**"
+        )
+    if (_GENRE_ROOT / "style-profile.json").is_file():
+        bits.append(
+            "- `style-profile.json` — programmatic counterpart to the "
+            "guide; same content, machine-readable."
+        )
+    if STATS_PATH.is_file():
+        bits.append(
+            "- `aggregate-stats.json` — pacing/transition/structure "
+            "statistics across the corpus. **Use for numeric targets.**"
+        )
+    if film_count:
+        bits.append(
+            f"- `analyses/*.json` — {film_count} per-film breakdowns. "
+            "Each contains pacing histograms, decile curves, "
+            "transitions, audio segments, color, and (when available) "
+            "shot descriptions. **Use as worked examples.**"
+        )
+    if edit_craft_files:
+        bits.append(
+            f"- `edit-craft/` — {edit_craft_files} files: editor-curated "
+            "reference library (scene templates, coverage lists, "
+            "sequence grammar, voice notes)."
+        )
+    bits.append("")
+    bits.append("## Reading the numbers")
+    bits.append("")
+    bits.append(
+        "- `face_presence.primary_face_avg_size_pct` is bbox area as a "
+        "percent of frame area, not a linear dimension."
+    )
+    bits.append(
+        "- `composition.preferred_face_center_y` is normalized: 0 = "
+        "top of frame, 1 = bottom. Wedding work tends to sit subjects "
+        "high (0.30–0.35)."
+    )
+    bits.append(
+        "- `emotion_preferences` uses DeepFace's intensity scale "
+        "(0–100). The model biases toward fear/sad/angry on contrasty "
+        "footage; read directionally, not literally."
+    )
+    bits.append(
+        "- `rejection_rules_learned` percentages are how often each "
+        "pattern appears in **kept** footage. Very low = strong reject "
+        "signal when you see it in raw clips."
+    )
+    bits.append(
+        "- `aggregate-stats.json` clip durations are seconds; pacing "
+        "deciles run [0.0–0.1, 0.1–0.2, …] of film runtime, so "
+        "deciles[0] is the opening minute-or-so and deciles[9] is the "
+        "ending."
+    )
+    bits.append("")
+    bits.append("---")
+    bits.append("")
+    bits.append(
+        "_Generated by `film-style` from the editor's local archive. "
+        "Drop this whole bundle into your context window or a vector "
+        "store; the README is the entry point._"
+    )
+    return "\n".join(bits) + "\n"
+
+
+def _build_handoff_zip(brand: str) -> bytes:
+    """Build the zip blob for /api/handoff.zip."""
+    buf = io.BytesIO()
+
+    profile: dict | None = None
+    if SHOT_PROFILE_PATH.is_file():
+        try:
+            profile = json.loads(SHOT_PROFILE_PATH.read_text())
+        except json.JSONDecodeError:
+            profile = None
+
+    stats: dict | None = None
+    if STATS_PATH.is_file():
+        try:
+            stats = json.loads(STATS_PATH.read_text())
+        except json.JSONDecodeError:
+            stats = None
+
+    film_count = (
+        len(list(ANALYSES_DIR.glob("*.json")))
+        if ANALYSES_DIR.is_dir()
+        else 0
+    )
+    edit_craft_files = (
+        sum(1 for p in EDIT_CRAFT_DIR.rglob("*") if p.is_file())
+        if EDIT_CRAFT_DIR.is_dir()
+        else 0
+    )
+    genre = _active_genre_at_import()
+
+    readme = _handoff_readme(
+        brand=brand,
+        genre=genre,
+        profile=profile,
+        stats=stats,
+        film_count=film_count,
+        edit_craft_files=edit_craft_files,
+    )
+
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("README.md", readme)
+
+        for arc, p in _handoff_sources():
+            zf.write(p, arcname=arc)
+
+        if EDIT_CRAFT_DIR.is_dir():
+            for p in sorted(EDIT_CRAFT_DIR.rglob("*")):
+                if p.is_file():
+                    rel = p.relative_to(EDIT_CRAFT_DIR).as_posix()
+                    zf.write(p, arcname=f"edit-craft/{rel}")
+
+        if ANALYSES_DIR.is_dir():
+            for p in sorted(ANALYSES_DIR.glob("*.json")):
+                zf.write(p, arcname=f"analyses/{p.name}")
+
+    return buf.getvalue()
+
+
 def _slug_safe(name: str) -> bool:
     """Allow filename-style stems (letters, digits, spaces, common punct)
     but block path traversal and control chars. Real-world wedding-film
@@ -284,6 +535,32 @@ def _make_handler():
                     {"exists": True, "path": str(SHOT_PROFILE_PATH),
                      "profile": profile}
                 )
+
+            if path == "/api/handoff":
+                return self._send_json(_handoff_manifest())
+
+            if path == "/api/handoff.zip":
+                manifest = _handoff_manifest()
+                if not manifest["exists"]:
+                    return self.send_error(HTTPStatus.NOT_FOUND)
+                try:
+                    cfg = load_config()
+                    brand = getattr(cfg, "brand_name", "") or ""
+                except Exception:
+                    brand = ""
+                blob = _build_handoff_zip(brand=brand)
+                fname = f"{(brand or 'editor').lower().replace(' ', '-')}-handoff.zip"
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header(
+                    "Content-Disposition",
+                    f'attachment; filename="{fname}"',
+                )
+                self.send_header("Content-Length", str(len(blob)))
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(blob)
+                return
 
             if path == "/api/edit-craft":
                 return self._send_json(_edit_craft_index())
