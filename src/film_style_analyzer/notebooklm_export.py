@@ -362,7 +362,25 @@ def write_brief(
     inspirations: list[dict] | None = None,
     title: str = "Editing Style Profile",
     brand_name: str = "the editor",
+    allowed_roots: list[Path] | None = None,
 ) -> Path:
+    """Write the brief to `output_path`.
+
+    If `allowed_roots` is provided, the resolved target must live under one of
+    them, otherwise the write is refused. This mirrors the containment the MCP
+    server applies to caller-supplied paths so the brief can't be written to an
+    arbitrary filesystem location. Callers that pass no `allowed_roots` (e.g.
+    the CLI, which supplies its own trusted default) are unaffected.
+    """
+    if allowed_roots:
+        resolved = output_path.expanduser().resolve()
+        roots = [Path(r).expanduser().resolve() for r in allowed_roots]
+        if not any(resolved == r or r in resolved.parents for r in roots):
+            raise ValueError(
+                f"refusing to write NotebookLM brief outside allowed roots: "
+                f"{resolved}"
+            )
+        output_path = resolved
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
         export_brief(films, profile, pack, inspirations,
