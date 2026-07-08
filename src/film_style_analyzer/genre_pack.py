@@ -8,9 +8,15 @@ overridden in `~/.film-style-analyzer/genre_packs/`.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
+
+# Pack names become filesystem paths (``<dir>/<name>.toml``). Restrict them to
+# a safe charset so a crafted name can't traverse directories or otherwise
+# escape the pack directories.
+_SAFE_NAME = re.compile(r"^[A-Za-z0-9_-]+$")
 
 USER_PACK_DIR = Path.home() / ".film-style-analyzer" / "genre_packs"
 SHIPPED_PACK_DIR = Path(__file__).parent / "genre_packs"
@@ -46,7 +52,16 @@ class GenrePack:
     prompts: dict[str, str]
 
 
+def _validate_name(name: str) -> None:
+    if not isinstance(name, str) or not _SAFE_NAME.match(name):
+        raise GenrePackError(
+            f"invalid genre pack name {name!r}: "
+            "only letters, digits, dash, and underscore are allowed"
+        )
+
+
 def _resolve_path(name: str) -> Path:
+    _validate_name(name)
     user = USER_PACK_DIR / f"{name}.toml"
     if user.is_file():
         return user

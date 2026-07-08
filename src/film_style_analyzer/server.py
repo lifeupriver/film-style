@@ -482,6 +482,39 @@ def _make_handler():
             self.end_headers()
             self.wfile.write(data)
 
+        # ---- security helpers -------------------------------------------
+        def _origin_ok(self) -> bool:
+            """CSRF/Origin defense for mutating requests.
+
+            Rejects any request whose ``Origin``/``Referer`` host differs
+            from the server's own host. Same-origin requests pass, and
+            requests with no ``Origin``/``Referer`` (curl and other local
+            tooling) are allowed so localhost automation keeps working.
+            """
+            host_hdr = self.headers.get("Host") or ""
+            server_host = host_hdr.rsplit(":", 1)[0].strip("[]").lower()
+            for header in ("Origin", "Referer"):
+                val = self.headers.get(header)
+                if not val:
+                    continue
+                req_host = (urlparse(val).hostname or "").lower()
+                if not req_host:
+                    continue
+                if server_host and req_host != server_host:
+                    return False
+            return True
+
+        def _require_json_ct(self) -> bool:
+            """Require ``Content-Type: application/json`` on JSON POST bodies."""
+            ct = (self.headers.get("Content-Type") or "").split(";", 1)[0]
+            if ct.strip().lower() != "application/json":
+                self.send_error(
+                    HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+                    "Content-Type must be application/json",
+                )
+                return False
+            return True
+
         # ---- routing ----------------------------------------------------
         def do_GET(self):  # noqa: N802
             parsed = urlparse(self.path)
@@ -655,6 +688,11 @@ def _make_handler():
         def do_POST(self):  # noqa: N802
             parsed = urlparse(self.path)
             path = unquote(parsed.path)
+            # CSRF/Origin defense — reject cross-site mutating requests.
+            if not self._origin_ok():
+                return self.send_error(
+                    HTTPStatus.FORBIDDEN, "cross-origin request rejected"
+                )
             length = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(length) if length else b""
 
@@ -685,6 +723,8 @@ def _make_handler():
                 return self._send_json(report)
 
             if path == "/api/config":
+                if not self._require_json_ct():
+                    return
                 try:
                     payload = json.loads(body.decode("utf-8") or "{}")
                 except json.JSONDecodeError:
@@ -704,6 +744,8 @@ def _make_handler():
                 stem = path[len("/api/films/"):-len("/metadata")].strip("/")
                 if not _slug_safe(stem):
                     return self.send_error(HTTPStatus.BAD_REQUEST)
+                if not self._require_json_ct():
+                    return
                 p = ANALYSES_DIR / f"{stem}.json"
                 if not p.is_file():
                     return self.send_error(HTTPStatus.NOT_FOUND)
@@ -724,6 +766,8 @@ def _make_handler():
                 stem, idx_str = chapter_match.group(1), chapter_match.group(2)
                 if not _slug_safe(stem):
                     return self.send_error(HTTPStatus.BAD_REQUEST)
+                if not self._require_json_ct():
+                    return
                 p = ANALYSES_DIR / f"{stem}.json"
                 if not p.is_file():
                     return self.send_error(HTTPStatus.NOT_FOUND)
@@ -843,8 +887,25 @@ class _ThreadingServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", ""})
+
+
 def serve(host: str = "127.0.0.1", port: int = 7421, open_browser: bool = True) -> None:
-    """Start the dashboard server. Blocks until Ctrl-C."""
+    """Start the dashboard server. Blocks until Ctrl-C.
+
+    Defaults to the loopback interface (``127.0.0.1``). The dashboard exposes
+    a full read/write API with no authentication, so binding a non-loopback
+    address (e.g. ``0.0.0.0`` or a LAN IP) exposes that API to the network.
+    """
+    if host.strip().lower() not in _LOOPBACK_HOSTS:
+        print(
+            f"\n  WARNING: binding to {host!r} exposes an UNAUTHENTICATED "
+            "read/write API to the network.\n"
+            "           Anyone who can reach this host:port can read and "
+            "modify your data.\n"
+            "           Use 127.0.0.1 (the default) unless you understand "
+            "the risk.\n"
+        )
     handler = _make_handler()
     with _ThreadingServer((host, port), handler) as httpd:
         url = f"http://{host}:{port}"
