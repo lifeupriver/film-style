@@ -19,15 +19,22 @@ Run via:  film-style mcp-serve
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 DATA_ROOT = Path.home() / ".film-style-analyzer"
 
 
-def _active_genre_at_import() -> str:
-    """Read the active genre from config at module load. Falls back to 'wedding'."""
+def _active_genre() -> str:
+    """Read the active genre from config. Falls back to 'wedding'.
+
+    Resolved per-call (not frozen at import) so a genre switch mid-session is
+    honored — writes and pack-based validation must target the SAME genre.
+    """
     try:
         from .config import load as _load
         return getattr(_load(), "default_genre", "wedding")
@@ -35,7 +42,39 @@ def _active_genre_at_import() -> str:
         return "wedding"
 
 
-_GENRE_ROOT = DATA_ROOT / _active_genre_at_import()
+# Per-call path resolvers. The genre root is re-resolved on every call so a
+# config genre switch immediately repoints reads/writes; the module-level
+# constants below are only an import-time snapshot kept for back-compat and
+# tests (which reload the module after pointing HOME at a temp dir).
+def _genre_root() -> Path:
+    return DATA_ROOT / _active_genre()
+
+
+def _analyses_dir() -> Path:
+    return _genre_root() / "analyses"
+
+
+def _thumbs_dir() -> Path:
+    return _genre_root() / "thumbs"
+
+
+def _audio_dir() -> Path:
+    return _genre_root() / "audio"
+
+
+def _profile_path() -> Path:
+    return _genre_root() / "style-profile.json"
+
+
+def _guide_path() -> Path:
+    return _genre_root() / "style-guide.md"
+
+
+def _stats_path() -> Path:
+    return _genre_root() / "aggregate-stats.json"
+
+
+_GENRE_ROOT = _genre_root()
 ANALYSES_DIR = _GENRE_ROOT / "analyses"
 THUMBS_DIR = _GENRE_ROOT / "thumbs"
 AUDIO_DIR = _GENRE_ROOT / "audio"
@@ -55,16 +94,34 @@ class MCPServerError(RuntimeError):
 # ---------------------------------------------------------------------------
 
 def _safe_stem(stem: str) -> str:
-    """Reject anything that could traverse out of ANALYSES_DIR."""
-    import re
-    if not re.match(r"^[A-Za-z0-9._\-]+$", stem):
+    """Reject anything that could traverse out of the analyses dir, while
+    still accepting the real filenames the import pipeline produces — spaces,
+    brackets, ampersands, unicode word chars, etc.
+
+    The old allow-list (`^[A-Za-z0-9._\\-]+$`) rejected those exact filenames,
+    locking imported films out of every stem-based tool. We instead deny the
+    handful of things that actually enable traversal:
+      - path separators (`/`, `\\`)
+      - parent-dir refs (`..`)
+      - empty / whitespace-only / dot-only names
+      - control characters (incl. NUL)
+    """
+    if not isinstance(stem, str) or not stem.strip():
+        raise MCPServerError(f"invalid film stem: {stem!r}")
+    if "/" in stem or "\\" in stem:
+        raise MCPServerError(f"invalid film stem: {stem!r}")
+    if ".." in stem:
+        raise MCPServerError(f"invalid film stem: {stem!r}")
+    if stem.strip(". ") == "":  # ".", "..", "…" etc — dot/space-only
+        raise MCPServerError(f"invalid film stem: {stem!r}")
+    if any(ord(c) < 32 for c in stem):
         raise MCPServerError(f"invalid film stem: {stem!r}")
     return stem
 
 
 def _load_film(stem: str) -> "FilmAnalysis":
     from .schemas import FilmAnalysis
-    path = ANALYSES_DIR / f"{_safe_stem(stem)}.json"
+    path = _analyses_dir() / f"{_safe_stem(stem)}.json"
     if not path.is_file():
         raise MCPServerError(f"no analysis at {path}")
     return FilmAnalysis.model_validate_json(path.read_text())
@@ -72,13 +129,17 @@ def _load_film(stem: str) -> "FilmAnalysis":
 
 def _load_all_films() -> list["FilmAnalysis"]:
     from .schemas import FilmAnalysis
-    if not ANALYSES_DIR.exists():
+    analyses_dir = _analyses_dir()
+    if not analyses_dir.exists():
         return []
     out: list[FilmAnalysis] = []
-    for p in sorted(ANALYSES_DIR.glob("*.json")):
+    for p in sorted(analyses_dir.glob("*.json")):
         try:
             out.append(FilmAnalysis.model_validate_json(p.read_text()))
-        except Exception:
+        except Exception as e:
+            # A silently dropped analysis shrinks the corpus without any
+            # signal — surface it so the operator can spot a bad/stale file.
+            logger.warning("skipping unreadable analysis %s: %s", p, e)
             continue
     return out
 
@@ -123,21 +184,23 @@ def tool_get_style_profile() -> dict[str, Any]:
     """Return the typed style-profile.json — the canonical artifact for
     editing in this filmmaker's style. Contains pacing, transitions, audio,
     color, shot mix, music, scene rules, plus a human-readable rules array."""
-    if not PROFILE_PATH.is_file():
+    profile_path = _profile_path()
+    if not profile_path.is_file():
         raise MCPServerError(
-            f"{PROFILE_PATH} does not exist. Run `film-style guide` first."
+            f"{profile_path} does not exist. Run `film-style guide` first."
         )
-    return json.loads(PROFILE_PATH.read_text())
+    return json.loads(profile_path.read_text())
 
 
 def tool_get_style_guide() -> str:
     """Return the markdown style guide. Pair with get_style_profile() for
     full coverage — the guide is for reading, the profile is for parsing."""
-    if not GUIDE_PATH.is_file():
+    guide_path = _guide_path()
+    if not guide_path.is_file():
         raise MCPServerError(
-            f"{GUIDE_PATH} does not exist. Run `film-style guide` first."
+            f"{guide_path} does not exist. Run `film-style guide` first."
         )
-    return GUIDE_PATH.read_text()
+    return guide_path.read_text()
 
 
 def tool_get_aggregate_stats() -> dict[str, Any]:
@@ -172,16 +235,17 @@ def tool_set_film_metadata(stem: str, metadata: dict[str, str | None]) -> dict[s
     from .metadata import merge as merge_md
     a = _load_film(stem)
     a.metadata = merge_md(a.metadata, metadata)
-    target_path = ANALYSES_DIR / f"{_safe_stem(stem)}.json"
+    target_path = _analyses_dir() / f"{_safe_stem(stem)}.json"
     target_path.write_text(a.model_dump_json(indent=2))
     return {"stem": stem, "metadata": a.metadata}
 
 
 def _active_pack():
-    """Resolve the active genre pack for label validation."""
-    from .config import load as _load_cfg
+    """Resolve the active genre pack for label validation. Reads the same
+    active genre as `_genre_root()` so validation and writes stay in lockstep
+    after a genre switch."""
     from .genre_pack import load as _load_pack
-    return _load_pack(getattr(_load_cfg(), "default_genre", "wedding"))
+    return _load_pack(_active_genre())
 
 
 def tool_get_unlabeled_chapter_thumbnails(stem: str, max_chapters: int = 12) -> dict[str, Any]:
@@ -190,6 +254,7 @@ def tool_get_unlabeled_chapter_thumbnails(stem: str, max_chapters: int = 12) -> 
     blocks Claude can see; callers without MCP image support still get the
     paths and can read them with their own tools."""
     a = _load_film(stem)
+    genre_root = _genre_root()
     pending = [c for c in a.chapters if not c.label and c.representative_thumbnail]
     batch = pending[:max_chapters]
     return {
@@ -200,7 +265,10 @@ def tool_get_unlabeled_chapter_thumbnails(stem: str, max_chapters: int = 12) -> 
                 "start_sec": c.start_sec,
                 "end_sec": c.end_sec,
                 "duration_sec": c.duration_sec,
-                "thumbnail_path": str((DATA_ROOT / c.representative_thumbnail).resolve()),
+                # Thumbnails are stored relative to the GENRE root, not
+                # DATA_ROOT — joining against DATA_ROOT drops the genre
+                # segment and yields a nonexistent path.
+                "thumbnail_path": str((genre_root / c.representative_thumbnail).resolve()),
             }
             for c in batch
         ],
@@ -213,6 +281,11 @@ def tool_set_chapter_labels_bulk(stem: str, labels: dict) -> dict[str, Any]:
     """Apply chapter labels in bulk. `labels` maps chapter_index → label
     (or None to clear). Invalid labels are recorded in `skipped` and don't
     abort the rest of the batch."""
+    # NOTE: this (and the other set_*_bulk / set_*_label / metadata tools) is
+    # an unsynchronized read-modify-write on the analysis JSON — two concurrent
+    # writers to the same film can clobber each other's changes. Acceptable for
+    # the single-client MCP usage today; revisit with file locking if the
+    # server ever fans out to concurrent callers.
     a = _load_film(stem)
     valid = set(_active_pack().scene_labels)
     written = 0
@@ -233,7 +306,7 @@ def tool_set_chapter_labels_bulk(stem: str, labels: dict) -> dict[str, Any]:
                 continue
         a.chapters[idx].label = label
         written += 1
-    target = ANALYSES_DIR / f"{_safe_stem(stem)}.json"
+    target = _analyses_dir() / f"{_safe_stem(stem)}.json"
     target.write_text(a.model_dump_json(indent=2))
     return {
         "stem": stem,
@@ -249,6 +322,7 @@ def tool_get_unlabeled_clip_thumbnails(stem: str, start_index: int = 0,
     from `start_index` (clip index, not list position). Used for shot-size
     labeling."""
     a = _load_film(stem)
+    genre_root = _genre_root()
     pending = [c for c in a.cuts.clips
                if not c.shot_size and c.thumbnail and c.index >= start_index]
     batch = pending[:batch_size]
@@ -260,7 +334,8 @@ def tool_get_unlabeled_clip_thumbnails(stem: str, start_index: int = 0,
                 "start_sec": c.start_sec,
                 "end_sec": c.end_sec,
                 "duration_sec": c.duration_sec,
-                "thumbnail_path": str((DATA_ROOT / c.thumbnail).resolve()),
+                # Relative to the genre root (see chapter-thumbnail note).
+                "thumbnail_path": str((genre_root / c.thumbnail).resolve()),
             }
             for c in batch
         ],
@@ -295,7 +370,7 @@ def tool_set_shot_sizes_bulk(stem: str, sizes: dict) -> dict[str, Any]:
                 continue
         a.cuts.clips[idx].shot_size = sz
         written += 1
-    target = ANALYSES_DIR / f"{_safe_stem(stem)}.json"
+    target = _analyses_dir() / f"{_safe_stem(stem)}.json"
     target.write_text(a.model_dump_json(indent=2))
     return {
         "stem": stem,
@@ -311,6 +386,7 @@ def tool_get_undescribed_clip_thumbnails(stem: str, start_index: int = 0,
     shot_description, starting at clip index `start_index`. Used by Claude
     Desktop's describe-clips workflow."""
     a = _load_film(stem)
+    genre_root = _genre_root()
     pending = [c for c in a.cuts.clips
                if c.shot_description is None and c.thumbnail and c.index >= start_index]
     batch = pending[:batch_size]
@@ -323,7 +399,8 @@ def tool_get_undescribed_clip_thumbnails(stem: str, start_index: int = 0,
                 "end_sec": c.end_sec,
                 "duration_sec": c.duration_sec,
                 "shot_size": c.shot_size,
-                "thumbnail_path": str((DATA_ROOT / c.thumbnail).resolve()),
+                # Relative to the genre root (see chapter-thumbnail note).
+                "thumbnail_path": str((genre_root / c.thumbnail).resolve()),
             }
             for c in batch
         ],
@@ -332,6 +409,11 @@ def tool_get_undescribed_clip_thumbnails(stem: str, start_index: int = 0,
             sum(1 for c in a.cuts.clips
                 if c.shot_description is None and c.thumbnail) - len(batch),
         ),
+        # NOTE: these controlled vocabularies are wedding-specific. Unlike
+        # scene_labels / shot_labels (sourced from the active pack), the genre
+        # packs ship no shot-description vocabulary field, so there is nothing
+        # pack-backed to wire this to yet; it stays wedding-default until such
+        # a field is added to GenrePack.
         "schema_hint": {
             "subjects": ["bride", "groom", "couple", "wedding_party",
                          "officiant", "parents", "family", "kids", "guests",
@@ -384,7 +466,7 @@ def tool_set_clip_descriptions_bulk(stem: str, descriptions: dict) -> dict[str, 
             continue
         a.cuts.clips[idx].shot_description = sd
         written += 1
-    target = ANALYSES_DIR / f"{_safe_stem(stem)}.json"
+    target = _analyses_dir() / f"{_safe_stem(stem)}.json"
     target.write_text(a.model_dump_json(indent=2))
     return {
         "stem": stem,
@@ -412,8 +494,17 @@ def tool_set_chapter_label(stem: str, chapter_index: int,
         )
     if label is not None:
         label = str(label).strip().lower().replace(" ", "_") or None
+    # Enforce the same genre-pack validation the bulk tool applies — a single
+    # write must not be able to slip an invalid label into the corpus.
+    if label is not None:
+        valid = set(_active_pack().scene_labels)
+        if label not in valid:
+            raise MCPServerError(
+                f"invalid label {label!r} for the active genre; "
+                f"valid labels: {sorted(valid)}"
+            )
     a.chapters[chapter_index].label = label
-    target_path = ANALYSES_DIR / f"{_safe_stem(stem)}.json"
+    target_path = _analyses_dir() / f"{_safe_stem(stem)}.json"
     target_path.write_text(a.model_dump_json(indent=2))
     return {
         "stem": stem,
@@ -462,6 +553,24 @@ def tool_compare_fcpxml(fcpxml_content: str | None = None,
 # by nature, so we keep the API surface minimal and return a structured result.
 # ---------------------------------------------------------------------------
 
+def _contained_write_path(raw: str | Path, *, what: str) -> Path:
+    """Resolve `raw` and ensure it lands under an allowed write root
+    (DATA_ROOT or the user's home directory).
+
+    The MCP write tools (import downloads, NotebookLM brief) otherwise accept
+    an arbitrary absolute path, letting a caller write anywhere on the
+    filesystem (e.g. /etc). This constrains them to sane roots.
+    """
+    target = Path(raw).expanduser().resolve()
+    allowed = [DATA_ROOT.resolve(), Path.home().resolve()]
+    if not any(target == root or root in target.parents for root in allowed):
+        raise MCPServerError(
+            f"{what} must be under {DATA_ROOT} or your home directory; "
+            f"refused {target}"
+        )
+    return target
+
+
 def _expand_video_paths(paths: list[str]) -> list[Path]:
     """Resolve a mix of file paths and folder paths to a flat list of video files."""
     out: list[Path] = []
@@ -505,14 +614,24 @@ def tool_analyze_films(
     from .genre_pack import load as load_genre_pack
 
     cfg = load_config()
-    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
+    genre = getattr(cfg, "default_genre", "wedding")
+    pack = load_genre_pack(genre)
+    # Resolve the genre dirs from the SAME cfg read used to pick the pack, so
+    # analyses/thumbs land in the genre whose pack we validated against.
+    genre_root = DATA_ROOT / genre
+    analyses_dir = genre_root / "analyses"
+    thumbs_dir = genre_root / "thumbs"
+    audio_dir = genre_root / "audio"
     files = _expand_video_paths(paths)
-    ANALYSES_DIR.mkdir(parents=True, exist_ok=True)
-    THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+    analyses_dir.mkdir(parents=True, exist_ok=True)
+    thumbs_dir.mkdir(parents=True, exist_ok=True)
 
+    # NOTE: this loop is long-running and fully synchronous — each film can
+    # take minutes. Callers should expect a blocking call; there is no
+    # progress streaming here by design (keeps the MCP surface simple).
     results: list[dict] = []
     for f in files:
-        out_path = ANALYSES_DIR / f"{f.stem}.json"
+        out_path = analyses_dir / f"{f.stem}.json"
         if out_path.exists() and not force:
             results.append({
                 "file": str(f), "stem": f.stem,
@@ -521,8 +640,8 @@ def tool_analyze_films(
             continue
         try:
             result = analyze_film(
-                f, THUMBS_DIR, pack,
-                audio_root=AUDIO_DIR,
+                f, thumbs_dir, pack,
+                audio_root=audio_dir,
                 min_scene_length_sec=cfg.min_scene_length_sec,
                 threshold=cfg.scene_detect_threshold,
                 skip_audio=skip_audio,
@@ -586,6 +705,13 @@ def tool_generate_guide(
     from .profile_writer import build_profile
 
     cfg = load_config()
+    genre = getattr(cfg, "default_genre", "wedding")
+    genre_root = DATA_ROOT / genre
+    analyses_dir = genre_root / "analyses"
+    profile_path = genre_root / "style-profile.json"
+    guide_path = genre_root / "style-guide.md"
+    stats_path = genre_root / "aggregate-stats.json"
+
     analyses = _load_all_films()
     if not analyses:
         raise MCPServerError(
@@ -595,26 +721,44 @@ def tool_generate_guide(
     notes: list[str] = []
 
     from .genre_pack import load as load_genre_pack
-    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
+    pack = load_genre_pack(genre)
 
     if vision:
         from .vision_classify import VisionError, classify_chapters, gather_existing_examples
-        examples = gather_existing_examples(ANALYSES_DIR, DATA_ROOT)
+        # Thumbnails are stored relative to the GENRE root.
+        examples = gather_existing_examples(analyses_dir, genre_root)
         for a in analyses:
-            unlabeled = [c for c in a.chapters
-                         if not c.label and c.representative_thumbnail]
+            # Only feed chapters whose thumbnail actually exists on disk.
+            # A missing file would otherwise be sent to the model as
+            # "[missing]", wasting tokens AND getting a garbage 'other' label
+            # persisted back onto the chapter. Skip those instead.
+            unlabeled = [
+                c for c in a.chapters
+                if not c.label and c.representative_thumbnail
+                and (genre_root / c.representative_thumbnail).is_file()
+            ]
+            missing = [
+                c for c in a.chapters
+                if not c.label and c.representative_thumbnail
+                and not (genre_root / c.representative_thumbnail).is_file()
+            ]
+            if missing:
+                notes.append(
+                    f"vision: {len(missing)} chapter thumbnail(s) missing for "
+                    f"{a.film.filename}; left unlabeled."
+                )
             if not unlabeled:
                 continue
             try:
                 labels = classify_chapters(
-                    [DATA_ROOT / c.representative_thumbnail for c in unlabeled],
+                    [genre_root / c.representative_thumbnail for c in unlabeled],
                     pack,
                     model=cfg.anthropic_model,
                     examples=examples,
                 )
                 for ch, label in zip(unlabeled, labels):
                     ch.label = label
-                (ANALYSES_DIR / f"{Path(a.film.filename).stem}.json").write_text(
+                (analyses_dir / f"{Path(a.film.filename).stem}.json").write_text(
                     a.model_dump_json(indent=2)
                 )
             except VisionError as e:
@@ -623,18 +767,33 @@ def tool_generate_guide(
     if shot_sizes:
         from .shot_size import ShotSizeError, classify_shots
         for a in analyses:
-            unlabeled = [c for c in a.cuts.clips if not c.shot_size and c.thumbnail]
+            # Same missing-thumbnail guard as the vision pass above.
+            unlabeled = [
+                c for c in a.cuts.clips
+                if not c.shot_size and c.thumbnail
+                and (genre_root / c.thumbnail).is_file()
+            ]
+            missing = [
+                c for c in a.cuts.clips
+                if not c.shot_size and c.thumbnail
+                and not (genre_root / c.thumbnail).is_file()
+            ]
+            if missing:
+                notes.append(
+                    f"shot-size: {len(missing)} clip thumbnail(s) missing for "
+                    f"{a.film.filename}; left unlabeled."
+                )
             if not unlabeled:
                 continue
             try:
                 labels = classify_shots(
-                    [DATA_ROOT / c.thumbnail for c in unlabeled],
+                    [genre_root / c.thumbnail for c in unlabeled],
                     pack,
                     model=cfg.anthropic_model,
                 )
                 for clip, lbl in zip(unlabeled, labels):
                     clip.shot_size = lbl
-                (ANALYSES_DIR / f"{Path(a.film.filename).stem}.json").write_text(
+                (analyses_dir / f"{Path(a.film.filename).stem}.json").write_text(
                     a.model_dump_json(indent=2)
                 )
             except ShotSizeError as e:
@@ -645,22 +804,22 @@ def tool_generate_guide(
         stats = {**stats, "gemini_analyses": []}
 
     profile = build_profile(analyses, stats, pack=pack)
-    PROFILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    PROFILE_PATH.write_text(json.dumps(profile, indent=2, default=str))
-    STATS_PATH.write_text(json.dumps(stats, indent=2, default=str))
+    profile_path.parent.mkdir(parents=True, exist_ok=True)
+    profile_path.write_text(json.dumps(profile, indent=2, default=str))
+    stats_path.write_text(json.dumps(stats, indent=2, default=str))
 
     try:
         md = write_guide(stats, pack, model=cfg.anthropic_model,
                          backend=getattr(cfg, "claude_backend", "api"))
-        GUIDE_PATH.write_text(md)
+        guide_path.write_text(md)
         guide_status = "written"
     except Exception as e:
         guide_status = f"failed: {e}"
 
     return {
         "film_count": len(analyses),
-        "profile_path": str(PROFILE_PATH),
-        "guide_path": str(GUIDE_PATH),
+        "profile_path": str(profile_path),
+        "guide_path": str(guide_path),
         "guide_status": guide_status,
         "rule_count": len(profile.get("rules", [])),
         "notes": notes,
@@ -692,7 +851,9 @@ def tool_import_videos(
     """
     from .vimeo_import import VideoImportError, download
 
-    target = Path(output_dir or "~/films/imports").expanduser()
+    # Constrain the download target to a sane root (under home or DATA_ROOT).
+    target = _contained_write_path(output_dir or "~/films/imports",
+                                   what="import output_dir")
     before = {p for p in target.glob("*.mp4")} if target.exists() else set()
 
     transcript_lines: list[str] = []
@@ -744,11 +905,23 @@ def tool_analyze_url(
     download_result = tool_import_videos(url, cookies_browser=cookies_browser)
     new_files = download_result.get("downloaded") or []
     if not new_files:
-        return {
-            "url": url,
-            "status": "nothing_to_analyze",
-            "import": download_result,
-        }
+        # A repeat call downloads nothing (yt-dlp's download-archive short
+        # circuits), which previously dead-ended at 'nothing_to_analyze' —
+        # even though the file is sitting on disk from the first call. Fall
+        # back to re-analyzing the already-downloaded file(s) in the output
+        # dir. analyze_films() will itself skip anything already analyzed
+        # (unless force), so this is safe and idempotent.
+        output_dir = download_result.get("output_dir")
+        candidates: list[str] = []
+        if output_dir and Path(output_dir).is_dir():
+            candidates = [str(p) for p in sorted(Path(output_dir).glob("*.mp4"))]
+        if not candidates:
+            return {
+                "url": url,
+                "status": "nothing_to_analyze",
+                "import": download_result,
+            }
+        new_files = candidates
 
     analysis_result = tool_analyze_films(
         new_files,
@@ -788,15 +961,16 @@ def tool_analyze_youtube_via_gemini(
         no full local pipeline needed).
       - Quickly evaluating a YouTube reference before deciding whether to
         download it for the full analysis.
-      - Building an "inspirations" file that the style-guide writer can
-        treat as additional qualitative context.
+      - Building an "inspirations" file that the NotebookLM export
+        (export_for_notebooklm) folds in as additional qualitative context.
 
     Args:
       url: youtube.com or youtu.be URL.
       custom_prompt: optional override for the default analysis prompt.
       save_as_inspiration: append the result to
-        ~/.film-style-analyzer/inspirations.json so future guide passes
-        can use it as context. Default True.
+        ~/.film-style-analyzer/<genre>/inspirations.json. The NotebookLM
+        brief (export_for_notebooklm) reads these as qualitative context.
+        Note: the style-guide writer does NOT currently read them. Default True.
 
     Returns the Gemini analysis dict.
     """
@@ -805,14 +979,14 @@ def tool_analyze_youtube_via_gemini(
     from .genre_pack import load as load_genre_pack
 
     cfg = load_config()
-    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
+    pack = load_genre_pack(_active_genre())
     try:
         result = analyze_youtube_url(url, pack, custom_prompt=custom_prompt)
     except GeminiError as e:
         raise MCPServerError(str(e))
 
     if save_as_inspiration:
-        inspirations_path = _GENRE_ROOT / "inspirations.json"
+        inspirations_path = _genre_root() / "inspirations.json"
         existing = []
         if inspirations_path.is_file():
             try:
@@ -835,7 +1009,7 @@ def tool_analyze_youtube_via_gemini(
 
 def tool_list_inspirations() -> dict[str, Any]:
     """List the YouTube inspirations saved by analyze_youtube_via_gemini."""
-    inspirations_path = _GENRE_ROOT / "inspirations.json"
+    inspirations_path = _genre_root() / "inspirations.json"
     if not inspirations_path.is_file():
         return {"count": 0, "inspirations": []}
     try:
@@ -850,6 +1024,7 @@ def tool_export_for_notebooklm(
     *,
     include_inspirations: bool = True,
     title: str | None = None,
+    overwrite: bool = False,
 ) -> dict[str, Any]:
     """Generate a markdown brief suitable for NotebookLM ingestion.
 
@@ -860,9 +1035,13 @@ def tool_export_for_notebooklm(
     rules AND qualitative video context.
 
     Args:
-      output_path: where to save. Default: ~/.film-style-analyzer/notebooklm-brief.md.
+      output_path: where to save. Must resolve under DATA_ROOT or your home
+        directory. Default: ~/.film-style-analyzer/<genre>/notebooklm-brief.md.
       include_inspirations: include any saved YouTube inspirations.
       title: title at the top of the brief.
+      overwrite: allow replacing an existing custom output_path. The default
+        path is always regenerated in place; a custom path that already
+        exists is refused unless overwrite=True.
 
     Returns the path and content (so the LLM can preview / discuss it).
     """
@@ -871,37 +1050,47 @@ def tool_export_for_notebooklm(
     from .notebooklm_export import write_brief
 
     cfg = load_config()
-    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
+    genre_root = _genre_root()
+    pack = load_genre_pack(_active_genre())
     films = _load_all_films()
     if not films:
         raise MCPServerError(
             "no analyses to export. Call analyze_films() first."
         )
 
+    profile_path = genre_root / "style-profile.json"
     profile: dict = {}
-    if PROFILE_PATH.is_file():
+    if profile_path.is_file():
         try:
-            profile = json.loads(PROFILE_PATH.read_text())
+            profile = json.loads(profile_path.read_text())
         except json.JSONDecodeError:
             profile = {}
 
     inspirations: list[dict] | None = None
     if include_inspirations:
-        ins_path = _GENRE_ROOT / "inspirations.json"
+        ins_path = genre_root / "inspirations.json"
         if ins_path.is_file():
             try:
                 inspirations = json.loads(ins_path.read_text())
             except json.JSONDecodeError:
                 inspirations = None
 
-    target = Path(output_path).expanduser() if output_path else (
-        _GENRE_ROOT / "notebooklm-brief.md"
-    )
+    if output_path:
+        # Constrain a caller-supplied path and refuse to clobber it silently.
+        target = _contained_write_path(output_path, what="export output_path")
+        if target.exists() and not overwrite:
+            raise MCPServerError(
+                f"{target} already exists; pass overwrite=True to replace it."
+            )
+    else:
+        target = genre_root / "notebooklm-brief.md"
+
     write_brief(
         films, profile, target, pack,
         inspirations=inspirations,
         title=title or "Editing Style Profile (for NotebookLM)",
         brand_name=cfg.brand_name,
+        allowed_roots=[DATA_ROOT, Path.home()],
     )
     content = target.read_text()
     return {
@@ -929,11 +1118,12 @@ def tool_corpus_report() -> dict[str, Any]:
     from .aggregator import aggregate
 
     films = _load_all_films()
+    genre_root = _genre_root()
     summary = {
         "film_count": len(films),
-        "guide_present": GUIDE_PATH.is_file(),
-        "profile_present": PROFILE_PATH.is_file(),
-        "data_root": str(DATA_ROOT),
+        "guide_present": (genre_root / "style-guide.md").is_file(),
+        "profile_present": (genre_root / "style-profile.json").is_file(),
+        "data_root": str(genre_root),
     }
     if not films:
         summary["status"] = "empty"
@@ -1005,11 +1195,12 @@ def tool_predict_cuts(song_path: str, target_duration_sec: float | None = None,
     p = Path(song_path).expanduser()
     if not p.is_file():
         raise MCPServerError(f"song file not found: {p}")
-    if not PROFILE_PATH.is_file():
+    profile_path = _profile_path()
+    if not profile_path.is_file():
         raise MCPServerError(
-            f"no style profile at {PROFILE_PATH}. Run `film-style guide` first."
+            f"no style profile at {profile_path}. Run `film-style guide` first."
         )
-    profile_data = json.loads(PROFILE_PATH.read_text())
+    profile_data = json.loads(profile_path.read_text())
     try:
         prediction = predict_cuts(
             p, profile_data,
@@ -1037,18 +1228,20 @@ def tool_predict_cuts(song_path: str, target_duration_sec: float | None = None,
 # ---------------------------------------------------------------------------
 
 def resource_profile() -> str:
-    if not PROFILE_PATH.is_file():
+    profile_path = _profile_path()
+    if not profile_path.is_file():
         return json.dumps({
             "error": "style-profile.json does not exist yet",
             "remedy": "Run `film-style analyze <folder>` then `film-style guide`.",
         }, indent=2)
-    return PROFILE_PATH.read_text()
+    return profile_path.read_text()
 
 
 def resource_guide() -> str:
-    if not GUIDE_PATH.is_file():
+    guide_path = _guide_path()
+    if not guide_path.is_file():
         return "# Style guide not yet generated\n\nRun `film-style guide`."
-    return GUIDE_PATH.read_text()
+    return guide_path.read_text()
 
 
 def resource_films_index() -> str:
@@ -1063,9 +1256,11 @@ def resource_film(stem: str) -> str:
 # Prompts — pre-built conversation starters for the most common workflow.
 # ---------------------------------------------------------------------------
 
-EDIT_IN_STYLE_PROMPT = """You are assisting a wedding-film editor with their
-editing workflow. The full toolkit is available; pick the right tool for the
-ask. Always begin by calling get_style_profile() so your suggestions are
+# Genre-neutral workflow guidance. The genre-specific framing (who the editor
+# is, what they're cutting) is supplied by the active pack's `mcp_edit_in_style`
+# prompt and prepended by `_build_edit_in_style_prompt()` below.
+EDIT_IN_STYLE_WORKFLOW = """The full toolkit is available; pick the right tool
+for the ask. Always begin by calling get_style_profile() so your suggestions are
 grounded in the editor's measured patterns, not generic conventions.
 
 Common workflows:
@@ -1101,7 +1296,7 @@ Common workflows:
      1. get_style_profile()  — load the typed contract.
      2. get_style_guide()    — prose context.
      3. find_similar_films(stem=...)  — tighter reference if a similar
-        prior wedding is named.
+        prior film is named.
      4. predict_cuts(song_path=...)  — if music is given.
 
   D. "Why did film X come out a certain way" / corrections
@@ -1114,6 +1309,26 @@ Editing rules:
   - Flag deviations from the profile explicitly when you propose them.
   - For long-running tools, set realistic expectations in the response.
 """
+
+
+def _build_edit_in_style_prompt() -> str:
+    """Compose the edit_in_style prompt from the ACTIVE genre pack's
+    `mcp_edit_in_style` field (shipped in every pack) plus the genre-neutral
+    workflow guidance. Previously the whole prompt was hardcoded wedding text
+    and the pack's tested `mcp_edit_in_style` prompt was never used."""
+    from .config import load as load_config
+    cfg = load_config()
+    try:
+        pack = _active_pack()
+        intro = pack.prompts["mcp_edit_in_style"].format(
+            brand_name=getattr(cfg, "brand_name", "the editor")
+        )
+    except Exception:
+        intro = (
+            "You are assisting an editor with their editing workflow, using "
+            "their measured style profile as the reference."
+        )
+    return f"{intro}\n\n{EDIT_IN_STYLE_WORKFLOW}"
 
 
 # ---------------------------------------------------------------------------
@@ -1221,8 +1436,9 @@ def build_server():
 
         Use this for studying films whose style inspires you, or quickly
         evaluating a YouTube reference before deciding to download it for
-        the full local pipeline. Results save to inspirations.json by
-        default — future guide passes will use them as qualitative context."""
+        the full local pipeline. Results save to <genre>/inspirations.json by
+        default — the NotebookLM export (export_for_notebooklm) folds them in
+        as qualitative context (the style-guide writer does not read them)."""
         return tool_analyze_youtube_via_gemini(
             url, custom_prompt=custom_prompt,
             save_as_inspiration=save_as_inspiration,
@@ -1238,6 +1454,7 @@ def build_server():
         output_path: str | None = None,
         include_inspirations: bool = True,
         title: str | None = None,
+        overwrite: bool = False,
     ) -> dict:
         """Generate a markdown brief for NotebookLM ingestion.
 
@@ -1245,11 +1462,15 @@ def build_server():
         brief to disk, returns its content. The user uploads it to NotebookLM
         as a 'paste text' source — alongside any YouTube reference videos —
         and NotebookLM can then chat about the editor's style grounded in
-        both the measured quantitative profile and the qualitative video refs."""
+        both the measured quantitative profile and the qualitative video refs.
+
+        A custom output_path must resolve under DATA_ROOT or your home dir,
+        and an existing one is refused unless overwrite=True."""
         return tool_export_for_notebooklm(
             output_path=output_path,
             include_inspirations=include_inspirations,
             title=title,
+            overwrite=overwrite,
         )
 
     @mcp.tool()
@@ -1487,7 +1708,7 @@ def build_server():
     def edit_in_style() -> str:
         """A conversation primer that briefs Claude on the editor's
         conventions and how to use the rest of the tools to assemble cuts."""
-        return EDIT_IN_STYLE_PROMPT
+        return _build_edit_in_style_prompt()
 
     return mcp
 
