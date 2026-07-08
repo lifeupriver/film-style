@@ -53,7 +53,12 @@ def aggregate_frames(frame_results: list[dict]) -> dict:
 
     framings = [f.get("framing", "no-person") for f in frame_results]
     framing_dist = _distribution(framings)
-    preferred = next(iter(framing_dist), "medium")
+    # `preferred_framing` drives the framing bonus in clip scoring, which only
+    # applies to people shots. Exclude non-framing sentinels ("no-person" and
+    # friends) so a real body framing wins even when most frames have no person.
+    _NON_FRAMING = {"no-person", "none", "", None}
+    real_framings = [f for f in framings if f not in _NON_FRAMING]
+    preferred = next(iter(_distribution(real_framings)), "medium")
 
     with_faces = [f for f in frame_results if f.get("faces_detected", 0) > 0]
     facing_camera = [f for f in with_faces if f.get("facing_camera")]

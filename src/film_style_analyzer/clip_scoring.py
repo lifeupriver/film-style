@@ -112,6 +112,12 @@ def compute_clip_score(clip: dict,
                        shot_profile: dict,
                        scene: str | None = None) -> tuple[int, str | None]:
     """Returns (score 0-100, hard_rejection_reason or None)."""
+    # A clip whose frames all failed to extract/analyze carries no composition
+    # data at all. Reject it as unusable instead of awarding the neutral
+    # baseline of 50 (which would let a black/corrupt clip pass).
+    if "framing" not in clip and "mean_brightness" not in clip:
+        return 0, "no_usable_frames"
+
     for name, test in HARD_REJECTIONS.items():
         try:
             if test(clip):

@@ -164,7 +164,10 @@ def analyze_film(
         except MusicAnalyzeError as e:
             logger.warning("music analysis failed for %s: %s", path.name, e)
 
-    if not skip_audio and wav_path is not None and cleanup_audio:
+    # Clean up the extracted WAV once every pass that needs it (audio and/or
+    # music) has run. This must not be gated on `not skip_audio`, otherwise a
+    # music-only run (skip_audio=True, skip_music=False) leaks the temp WAV.
+    if wav_path is not None and cleanup_audio:
         try:
             wav_path.unlink(missing_ok=True)
         except OSError:
@@ -197,7 +200,10 @@ def analyze_film(
     transitions = Transitions()
     dissolve_positions = []
     total = len(clips)
-    for c in clips:
+    # N clips have only N-1 interior boundaries. The last clip's transition_out
+    # is the film-end boundary (defaulting to "hard_cut"), not a cut between two
+    # clips — counting it inflates the transition stats, so iterate clips[:-1].
+    for c in clips[:-1]:
         # Count transition_out as the canonical transition between this clip and the next.
         t = c.transition_out
         if t == "hard_cut":
@@ -212,8 +218,13 @@ def analyze_film(
             transitions.fade_out += 1
         elif t == "still_hold":
             transitions.still_hold += 1
-        if c.index == 0 and c.transition_in == "fade_in":
+    # Film-edge fades: opening fade-in (from black) and closing fade-out (to
+    # black) are real transitions at the outer boundaries of the film.
+    if clips:
+        if clips[0].transition_in == "fade_in":
             transitions.fade_in += 1
+        if clips[-1].transition_out == "fade_out":
+            transitions.fade_out += 1
     transitions.dissolve_positions_pct = dissolve_positions
 
     dissolve_boundary_times = [
