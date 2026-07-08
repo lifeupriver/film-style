@@ -43,6 +43,20 @@ def _ensure_yt_dlp() -> str:
     return exe
 
 
+def _validate_url(url: str) -> None:
+    """Reject anything that isn't a plain http(s) URL.
+
+    A ``url`` beginning with ``-`` would otherwise be parsed by yt-dlp as
+    an option (e.g. ``--exec``, ``--config-locations``, ``-o``), which is an
+    argument-injection vector reachable from the MCP tools.
+    """
+    if not isinstance(url, str) or not url.startswith(("http://", "https://")):
+        raise VimeoImportError(
+            f"refusing to download {url!r}: url must start with "
+            "'http://' or 'https://'"
+        )
+
+
 def _build_command(
     yt_dlp: str,
     url: str,
@@ -51,6 +65,7 @@ def _build_command(
     quality: str,
     archive_path: Path | None,
 ) -> list[str]:
+    _validate_url(url)
     template = str(output_dir / "%(title).200B [%(id)s].%(ext)s")
     cmd = [
         yt_dlp,
@@ -65,7 +80,8 @@ def _build_command(
         cmd += ["--cookies-from-browser", cookies_browser]
     if archive_path is not None:
         cmd += ["--download-archive", str(archive_path)]
-    cmd.append(url)
+    # "--" ends option parsing so the url can never be treated as a flag.
+    cmd += ["--", url]
     return cmd
 
 
@@ -87,6 +103,7 @@ def download(
       quality: yt-dlp -f format string.
       archive: maintain a download-archive file so re-runs are idempotent.
     """
+    _validate_url(url)
     exe = _ensure_yt_dlp()
     output_dir.mkdir(parents=True, exist_ok=True)
     archive_path = output_dir / ".yt-dlp-archive.txt" if archive else None
