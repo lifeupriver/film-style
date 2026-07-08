@@ -2,7 +2,7 @@
 
 **Status:** Approved (in brainstorm)
 **Date:** 2026-05-06
-**Author:** Joshua + Claude
+**Author:** Maintainer + Claude
 
 ## Problem
 

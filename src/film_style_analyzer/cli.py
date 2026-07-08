@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import click
@@ -63,6 +64,45 @@ def _load_analyses() -> list[FilmAnalysis]:
     return out
 
 
+def _atomic_write_text(path: Path, text: str) -> None:
+    """Write `text` to `path` atomically (write to a sibling temp file, then
+    os.replace() into place). A crash or kill mid-write can otherwise leave
+    a truncated/corrupt JSON on disk that then permanently blocks
+    re-analysis or re-aggregation (the file "exists" so --force is needed,
+    but it won't parse)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp{os.getpid()}")
+    try:
+        tmp.write_text(text)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _read_json_or_die(path: Path, *, what: str = "JSON file") -> object:
+    """json.loads(path) but with a clean CLI error (naming the bad file)
+    instead of a raw traceback on corrupt/unreadable input."""
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        raise click.ClickException(f"corrupt {what} at {path}: {type(e).__name__}: {e}")
+
+
+def _load_analysis_or_die(path: Path) -> FilmAnalysis:
+    """Load a single FilmAnalysis JSON, turning corruption into a clean
+    CLI error naming the bad file instead of a raw traceback."""
+    try:
+        text = path.read_text()
+    except OSError as e:
+        raise click.ClickException(f"could not read analysis at {path}: {e}")
+    try:
+        return FilmAnalysis.model_validate_json(text)
+    except Exception as e:
+        raise click.ClickException(
+            f"corrupt analysis JSON at {path}: {type(e).__name__}: {e}"
+        )
+
+
 @click.group()
 @click.version_option(__version__)
 def cli() -> None:
@@ -78,7 +118,11 @@ def cli() -> None:
 @cli.command()
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
 @click.option("--output", type=click.Path(path_type=Path), default=ANALYSES_DIR,
-              help="Where to write analysis JSONs.")
+              help="Where to write analysis JSONs. NOTE: every other command "
+                   "(guide/list/stats/compare/match/tag/…) only ever reads "
+                   f"from the default location ({ANALYSES_DIR}); pointing "
+                   "--output elsewhere is a standalone dump, not wired into "
+                   "the rest of the pipeline.")
 @click.option("--force", is_flag=True, help="Re-analyze even if JSON exists.")
 @click.option("--min-scene-sec", type=float, default=None,
               help="Min scene length (sec). Default from config.")
@@ -105,7 +149,15 @@ def analyze(
     """Analyze one or more finished films."""
     cfg = load_config()
     pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
-    min_scene_sec = min_scene_sec if min_scene_sec is not None else cfg.min_scene_length_sec
+    # Precedence: explicit CLI flag > explicit config.json override >
+    # genre pack's tuned value > (analyze_film's own built-in default).
+    min_scene_sec = (
+        min_scene_sec
+        if min_scene_sec is not None
+        else cfg.min_scene_length_sec
+        if cfg.min_scene_length_sec is not None
+        else pack.min_scene_length_sec
+    )
     threshold = threshold if threshold is not None else cfg.scene_detect_threshold
     whisper_model = whisper_model or cfg.whisper_model
     language = language or cfg.language
@@ -115,9 +167,31 @@ def analyze(
     if not films:
         raise click.ClickException(f"no supported video files found at {path}")
 
+    if output != ANALYSES_DIR:
+        console.print(
+            f"[yellow]note[/yellow] writing analysis JSONs to {output} — "
+            f"no other film-style command reads from there (they all read "
+            f"{ANALYSES_DIR}). Copy/symlink into place, or drop --output, "
+            "if you want `guide`/`list`/`stats`/etc. to see these."
+        )
+
+    stem_counts: dict[str, int] = {}
+    for f in films:
+        stem_counts[f.stem] = stem_counts.get(f.stem, 0) + 1
+    for stem, n in sorted(stem_counts.items()):
+        if n > 1:
+            clashing = [f.name for f in films if f.stem == stem]
+            console.print(
+                f"[yellow]warning[/yellow] {n} files share the stem '{stem}' "
+                f"({', '.join(clashing)}) — they will overwrite each other's "
+                "analysis JSON and thumbnails since both are keyed by stem."
+            )
+
     output.mkdir(parents=True, exist_ok=True)
     THUMBS_DIR.mkdir(parents=True, exist_ok=True)
 
+    succeeded = 0
+    failed = 0
     with Progress(
         SpinnerColumn(),
         TextColumn("[bold]{task.description}"),
@@ -151,7 +225,7 @@ def analyze(
                     gemini_model=gemini_model,
                     cleanup_audio=cleanup,
                 )
-                out_path.write_text(result.model_dump_json(indent=2))
+                _atomic_write_text(out_path, result.model_dump_json(indent=2))
                 extras = []
                 if result.audio:
                     extras.append(f"audio:{result.audio['summary']['speech_segment_count']}sp")
@@ -162,9 +236,16 @@ def analyze(
                 tail = (" " + " ".join(extras)) if extras else ""
                 console.print(f"[green]ok[/green] {film.name} — {result.cuts.total} clips, "
                               f"avg {result.pacing.avg_clip_duration_sec}s{tail}")
+                succeeded += 1
             except Exception as e:
-                console.print(f"[red]fail[/red] {film.name}: {e}")
+                console.print(f"[red]fail[/red] {film.name}: {type(e).__name__}: {e}")
+                failed += 1
             progress.advance(task)
+
+    if failed and not succeeded:
+        raise click.ClickException(
+            f"all {failed} film(s) failed to analyze — see errors above"
+        )
 
 
 @cli.command()
@@ -183,6 +264,22 @@ def guide(output: Path, profile_output: Path, model: str | None,
     """Generate the editing style guide from analyzed films."""
     cfg = load_config()
     model = model or cfg.anthropic_model
+    backend = getattr(cfg, "claude_backend", "api")
+
+    # Vision passes always need the API (the local `claude` CLI is text-only);
+    # the guide-writing step needs it too unless routed through backend="cli".
+    # Check this up front so a missing key fails fast with a clean message
+    # instead of dying mid-run (or with a raw traceback) after doing work.
+    if (vision or shot_sizes or backend == "api") and not os.environ.get("ANTHROPIC_API_KEY"):
+        raise click.ClickException(
+            "ANTHROPIC_API_KEY is not set. Export it (required for --vision, "
+            "--shot-sizes, and the default claude_backend=\"api\"), or set "
+            '"claude_backend": "cli" in ~/.film-style-analyzer/config.json to '
+            "route plain-text guide writing through your local `claude` CLI "
+            "instead (vision passes still require the API key regardless of "
+            "backend)."
+        )
+
     analyses = _load_analyses()
     if not analyses:
         raise click.ClickException("no analyses found — run `film-style analyze <path>` first")
@@ -191,14 +288,14 @@ def guide(output: Path, profile_output: Path, model: str | None,
     if vision:
         console.print("[bold]Vision pass[/bold] — classifying chapter scene types…")
         # Gather already-labeled chapters across the archive as few-shot examples.
-        examples = gather_existing_examples(ANALYSES_DIR, DATA_ROOT)
+        examples = gather_existing_examples(ANALYSES_DIR, _GENRE_ROOT)
         if examples:
             console.print(f"  [dim]using {len(examples)} prior labels as few-shot reference[/dim]")
         for a in analyses:
             unlabeled = [c for c in a.chapters if not c.label and c.representative_thumbnail]
             if not unlabeled:
                 continue
-            thumb_paths = [DATA_ROOT / c.representative_thumbnail for c in unlabeled]
+            thumb_paths = [_GENRE_ROOT / c.representative_thumbnail for c in unlabeled]
             try:
                 labels = classify_chapters(thumb_paths, pack, model=model, examples=examples)
             except VisionError as e:
@@ -206,8 +303,9 @@ def guide(output: Path, profile_output: Path, model: str | None,
                 continue
             for ch, label in zip(unlabeled, labels):
                 ch.label = label
-            (ANALYSES_DIR / f"{Path(a.film.filename).stem}.json").write_text(
-                a.model_dump_json(indent=2)
+            _atomic_write_text(
+                ANALYSES_DIR / f"{Path(a.film.filename).stem}.json",
+                a.model_dump_json(indent=2),
             )
             console.print(f"  [green]labeled[/green] {a.film.filename}: {len(labels)} chapters")
 
@@ -218,7 +316,7 @@ def guide(output: Path, profile_output: Path, model: str | None,
             unlabeled = [c for c in a.cuts.clips if not c.shot_size and c.thumbnail]
             if not unlabeled:
                 continue
-            thumb_paths = [DATA_ROOT / c.thumbnail for c in unlabeled]
+            thumb_paths = [_GENRE_ROOT / c.thumbnail for c in unlabeled]
             try:
                 labels = classify_shots(thumb_paths, pack, model=model)
             except ShotSizeError as e:
@@ -226,8 +324,9 @@ def guide(output: Path, profile_output: Path, model: str | None,
                 continue
             for clip, label in zip(unlabeled, labels):
                 clip.shot_size = label
-            (ANALYSES_DIR / f"{Path(a.film.filename).stem}.json").write_text(
-                a.model_dump_json(indent=2)
+            _atomic_write_text(
+                ANALYSES_DIR / f"{Path(a.film.filename).stem}.json",
+                a.model_dump_json(indent=2),
             )
             console.print(f"  [green]labeled[/green] {a.film.filename}: {len(labels)} clips")
 
@@ -235,20 +334,22 @@ def guide(output: Path, profile_output: Path, model: str | None,
     if not include_gemini:
         stats = {**stats, "gemini_analyses": []}
     DATA_ROOT.mkdir(parents=True, exist_ok=True)
-    DEFAULT_STATS.write_text(json.dumps(stats, indent=2))
+    _atomic_write_text(DEFAULT_STATS, json.dumps(stats, indent=2))
 
     # Write the structured JSON profile FIRST — that artifact is what
     # downstream AI tools consume, and it's deterministic (no API call).
     profile = build_profile(analyses, stats, pack=pack)
     profile_output.parent.mkdir(parents=True, exist_ok=True)
-    profile_output.write_text(json.dumps(profile, indent=2, default=str))
+    _atomic_write_text(profile_output, json.dumps(profile, indent=2, default=str))
     console.print(f"[green]wrote[/green] {profile_output} ({len(profile.get('rules', []))} rules)")
 
     console.print(f"[bold]Aggregated[/bold] {stats['film_count']} films → calling Claude…")
-    md = write_guide(stats, pack, model=model,
-                     backend=getattr(cfg, "claude_backend", "api"))
+    try:
+        md = write_guide(stats, pack, model=model, backend=backend)
+    except RuntimeError as e:
+        raise click.ClickException(str(e))
     output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(md)
+    _atomic_write_text(output, md)
     console.print(f"[green]wrote[/green] {output}")
 
 
@@ -323,7 +424,7 @@ def compare(fcpxml_path: Path) -> None:
     """Compare a rough-cut FCPXML against the established style profile."""
     if not DEFAULT_STATS.exists():
         raise click.ClickException("no aggregate stats — run `film-style guide` first")
-    profile = json.loads(DEFAULT_STATS.read_text())
+    profile = _read_json_or_die(DEFAULT_STATS, what="aggregate stats")
     cut = parse_fcpxml(fcpxml_path)
 
     console.rule(f"Style Comparison: {fcpxml_path.name}")
@@ -420,7 +521,7 @@ def match(stem: str, top: int) -> None:
     target_path = ANALYSES_DIR / f"{stem}.json"
     if not target_path.exists():
         raise click.ClickException(f"no analysis at {target_path}")
-    target = FilmAnalysis.model_validate_json(target_path.read_text())
+    target = _load_analysis_or_die(target_path)
 
     archive: list[FilmAnalysis] = []
     for p in sorted(ANALYSES_DIR.glob("*.json")):
@@ -469,7 +570,7 @@ def tag(stem: str, set_: tuple[str, ...], unset: tuple[str, ...], show: bool) ->
     if not target.exists():
         raise click.ClickException(f"no analysis at {target}")
 
-    analysis = FilmAnalysis.model_validate_json(target.read_text())
+    analysis = _load_analysis_or_die(target)
 
     if show or not (set_ or unset):
         if not analysis.metadata:
@@ -496,7 +597,7 @@ def tag(stem: str, set_: tuple[str, ...], unset: tuple[str, ...], show: bool) ->
         updates[k.strip().lower()] = None
 
     analysis.metadata = merge_md(analysis.metadata, updates)
-    target.write_text(analysis.model_dump_json(indent=2))
+    _atomic_write_text(target, analysis.model_dump_json(indent=2))
     console.print(f"[green]wrote[/green] {target}")
     for k, v in sorted(analysis.metadata.items()):
         console.print(f"  [bold]{k}[/bold] = {v}")
@@ -521,7 +622,7 @@ def predict_cuts_cmd(song: Path, profile: Path, output: Path | None,
         raise click.ClickException(
             f"no style profile at {profile}. Run `film-style guide` first."
         )
-    profile_data = json.loads(profile.read_text())
+    profile_data = _read_json_or_die(profile, what="style profile")
 
     console.print(f"[bold]Predicting cuts[/bold] for {song.name}")
     try:
@@ -762,11 +863,13 @@ def score_clips(path: Path, output: Path | None, shot_profile_path: Path,
             "Run `film-style learn-shots` first."
         )
 
-    profile = json.loads(shot_profile_path.read_text())
+    profile = _read_json_or_die(shot_profile_path, what="shot profile")
     profile["path"] = str(shot_profile_path)
 
-    scene_map = json.loads(scene_context.read_text()) if scene_context else None
-    transcript_map = json.loads(transcripts.read_text()) if transcripts else None
+    scene_map = _read_json_or_die(scene_context, what="scene-context map") if scene_context else None
+    transcript_map = (
+        _read_json_or_die(transcripts, what="transcripts map") if transcripts else None
+    )
 
     if output is None:
         if path.is_dir():
@@ -806,10 +909,15 @@ def score_clips(path: Path, output: Path | None, shot_profile_path: Path,
 
 @cli.command()
 @click.option("--init", is_flag=True, help="Write a default config.json.")
-def config(init: bool) -> None:
+@click.option("--force", is_flag=True,
+              help="With --init, overwrite an existing config.json instead of refusing.")
+def config(init: bool, force: bool) -> None:
     """Show or initialize ~/.film-style-analyzer/config.json."""
     if init:
-        path = write_default_config()
+        try:
+            path = write_default_config(force=force)
+        except FileExistsError as e:
+            raise click.ClickException(str(e))
         console.print(f"[green]wrote[/green] {path}")
         return
     cfg = load_config()
@@ -924,16 +1032,45 @@ def migrate(to_genre: str | None) -> None:
     target_root = DATA_ROOT / target
     target_root.mkdir(parents=True, exist_ok=True)
     moved: list[str] = []
+    collisions: list[str] = []
     for name in LEGACY_LAYOUT_FILES:
         src = DATA_ROOT / name
         if not src.exists():
             continue
         dst = target_root / name
-        if dst.exists():
-            console.print(f"[yellow]skip[/yellow] {name} — already exists at {dst}")
-            continue
-        shutil.move(str(src), str(dst))
-        moved.append(name)
+        if src.is_dir():
+            # Merge directory contents item-by-item instead of skipping the
+            # whole directory when the destination already exists — a
+            # whole-directory skip would silently strand every legacy file
+            # inside it (e.g. per-film analyses/thumbs) even when most of
+            # them don't actually collide with anything at the destination.
+            dst.mkdir(parents=True, exist_ok=True)
+            left_behind = 0
+            for child in sorted(src.iterdir()):
+                cdst = dst / child.name
+                if cdst.exists():
+                    collisions.append(f"{name}/{child.name}")
+                    left_behind += 1
+                    continue
+                shutil.move(str(child), str(cdst))
+                moved.append(f"{name}/{child.name}")
+            if left_behind == 0:
+                src.rmdir()
+        else:
+            if dst.exists():
+                collisions.append(name)
+                continue
+            shutil.move(str(src), str(dst))
+            moved.append(name)
     console.print(f"[green]moved[/green] {len(moved)} items into {target_root}")
     for m in moved:
         console.print(f"  • {m}")
+    if collisions:
+        console.print(
+            f"[yellow]warning[/yellow] {len(collisions)} item(s) already existed "
+            f"at the destination and were left untouched at {DATA_ROOT} — "
+            "legacy data was NOT migrated for these; resolve the name clash "
+            "manually and re-run `migrate`:"
+        )
+        for c in collisions:
+            console.print(f"  ! {c}")

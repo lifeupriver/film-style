@@ -8,12 +8,11 @@ version = "0.1.0"
 description = "Analyze finished films across genres (wedding, commercial, brand content, social shorts, music videos, documentary) and generate per-genre editing style guides"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
 keywords = ["video", "editing", "style-transfer", "mcp", "claude", "gemini", "wedding-film", "commercial", "music-video", "documentary"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
@@ -26,7 +25,8 @@ dependencies = [
     "rich>=13.0",
     "anthropic>=0.40",
     "pydantic>=2.0",
-    "scenedetect[opencv]>=0.6.7",
+    "scenedetect>=0.7",
+    "opencv-python>=4.8",
 ]
 
 [project.optional-dependencies]
@@ -58,6 +58,11 @@ shots = [
 dev = [
     "pytest>=7.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/lifeupriver/film-style"
+Repository = "https://github.com/lifeupriver/film-style"
+Issues = "https://github.com/lifeupriver/film-style/issues"
 
 [project.scripts]
 film-style = "film_style_analyzer.cli:cli"

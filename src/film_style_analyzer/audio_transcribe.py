@@ -3,12 +3,32 @@
 from __future__ import annotations
 
 import os
+import warnings
 from pathlib import Path
 from typing import Any
 
 
 class TranscribeError(RuntimeError):
     pass
+
+
+_diarize_warned = False
+
+
+def _resolve_diarization_pipeline(whisperx):
+    """Locate the DiarizationPipeline class across whisperx versions.
+
+    It was removed from the top-level `whisperx` namespace in recent releases
+    and now lives under `whisperx.diarize`. Returns the class or None if
+    diarization is unavailable in the installed version."""
+    cls = getattr(whisperx, "DiarizationPipeline", None)
+    if cls is not None:
+        return cls
+    try:
+        from whisperx.diarize import DiarizationPipeline as cls  # type: ignore
+        return cls
+    except Exception:
+        return None
 
 
 def _select_device() -> tuple[str, str]:
@@ -60,17 +80,30 @@ def transcribe(
         # Speaker diarization (requires HF_TOKEN for pyannote model download).
         speakers_detected = 0
         if diarize and os.environ.get("HF_TOKEN"):
-            try:
-                diarize_model = whisperx.DiarizationPipeline(
-                    use_auth_token=os.environ["HF_TOKEN"], device=device,
-                )
-                diarize_segments = diarize_model(audio)
-                result = whisperx.assign_word_speakers(diarize_segments, result)
-                speakers_detected = len({
-                    s.get("speaker") for s in result.get("segments", []) if s.get("speaker")
-                })
-            except Exception:
-                pass
+            DiarizationPipeline = _resolve_diarization_pipeline(whisperx)
+            if DiarizationPipeline is None:
+                global _diarize_warned
+                if not _diarize_warned:
+                    _diarize_warned = True
+                    warnings.warn(
+                        "whisperx.DiarizationPipeline is unavailable in the "
+                        "installed whisperx version; skipping speaker "
+                        "diarization. Transcription and alignment still run.",
+                        RuntimeWarning,
+                        stacklevel=2,
+                    )
+            else:
+                try:
+                    diarize_model = DiarizationPipeline(
+                        use_auth_token=os.environ["HF_TOKEN"], device=device,
+                    )
+                    diarize_segments = diarize_model(audio)
+                    result = whisperx.assign_word_speakers(diarize_segments, result)
+                    speakers_detected = len({
+                        s.get("speaker") for s in result.get("segments", []) if s.get("speaker")
+                    })
+                except Exception:
+                    pass
     except Exception as e:
         raise TranscribeError(f"whisperx failed: {e}") from e
 

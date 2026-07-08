@@ -143,7 +143,9 @@ brew install ffmpeg
 ```bash
 git clone https://github.com/lifeupriver/film-style.git
 cd film-style
-pip install -e . --break-system-packages
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e .
 ```
 
 ### Optional extras
@@ -156,6 +158,8 @@ pip install -e . --break-system-packages
 | `[mcp]` | Claude Desktop integration over MCP | `pip install -e '.[mcp]'` |
 | `[shots]` | MediaPipe + OpenCV + DeepFace for `learn-shots` and `score-clips` | `pip install -e '.[shots]'` |
 | `[audio]` | WhisperX transcription + inaSpeechSegmenter classification (heavy; needs Python 3.11–3.12) | `pip install -e '.[audio]'` |
+
+All extras install into the same virtual environment, e.g. `pip install -e '.[music,vimeo]'`.
 
 ### Environment variables
 
@@ -186,7 +190,7 @@ film-style compare ~/edits/rough-cut-v1.fcpxml
 film-style predict-cuts ~/music/new-song.mp3 --output cuts.fcpxml
 
 # 6. Find which prior film is most stylistically similar.
-film-style match sarah-and-mike
+film-style match my-film
 
 # 7. Export a NotebookLM-ingestion brief.
 film-style export-notebooklm
@@ -284,7 +288,7 @@ The MCP server makes the whole pipeline callable from a Claude Desktop chat.
 ### Setup
 
 ```bash
-pip install -e '.[mcp]' --break-system-packages
+pip install -e '.[mcp]'
 ```
 
 Edit `~/Library/Application Support/Claude/claude_desktop_config.json`:
@@ -396,7 +400,7 @@ emotion-intensity tier.
 
 ```bash
 film-style learn-shots
-film-style learn-shots --films "sarah-and-mike,chen-williams"
+film-style learn-shots --films "my-film,another-film"
 film-style learn-shots --force          # rebuild
 ```
 
@@ -592,7 +596,7 @@ responsibilities, data flow, schemas, design decisions, known limits.
 ## Tests
 
 ```bash
-pip install -e '.[dev]' --break-system-packages
+pip install -e '.[dev]'
 pytest
 ```
 

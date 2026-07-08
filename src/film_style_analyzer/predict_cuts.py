@@ -21,6 +21,8 @@ import bisect
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+import numpy as np
+
 
 class PredictCutsError(RuntimeError):
     pass
@@ -44,7 +46,9 @@ def _load_song_beats(song_path: Path) -> tuple[float, float, list[float]]:
     try:
         tempo, beat_frames = librosa.beat.beat_track(y=y, sr=sr)
         beat_times = [float(t) for t in librosa.frames_to_time(beat_frames, sr=sr)]
-        tempo_val = float(tempo) if hasattr(tempo, "__float__") else float(tempo[0])
+        # librosa.beat.beat_track returns tempo as a shape-(1,) ndarray under
+        # numpy 2.x; float(ndarray) raises, so flatten to the first scalar.
+        tempo_val = float(np.atleast_1d(tempo).reshape(-1)[0])
     except Exception as e:
         raise PredictCutsError(f"beat tracking failed: {e}") from e
     return duration, tempo_val, beat_times
