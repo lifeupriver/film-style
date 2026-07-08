@@ -9,7 +9,9 @@ for new platforms are welcome.
 ```bash
 git clone https://github.com/lifeupriver/film-style.git
 cd film-style
-pip install -e '.[dev]' --break-system-packages
+python -m venv .venv
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
+pip install -e '.[dev]'
 brew install ffmpeg
 pytest
 ```
@@ -17,7 +19,7 @@ pytest
 Optional extras for testing the heavier code paths:
 
 ```bash
-pip install -e '.[music,vimeo,gemini,mcp,shots]' --break-system-packages
+pip install -e '.[music,vimeo,gemini,mcp,shots]'
 ```
 
 `[audio]` (WhisperX + inaSpeechSegmenter) needs Python 3.11 or 3.12.
@@ -41,6 +43,9 @@ detection results.
   `demo-wedding`, `your-handle`).
 - **Public-facing UI strings should be configurable.** Use `Config.brand_name`
   / `Config.editor_name` rather than hardcoding identities.
+- **Version is manually synced.** `version` in `pyproject.toml` and
+  `__version__` in `src/film_style_analyzer/__init__.py` must match. Bump
+  both in the same commit and add a `CHANGELOG.md` entry.
 
 ## Running tests
 
