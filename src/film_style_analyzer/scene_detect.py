@@ -46,7 +46,14 @@ def detect_clips(
         Default 8.0 (wedding-film tuning). Try 12-15 for more aggressive
         narrative content; 5-6 for very soft/montage edits.
     """
-    fps_hint = 24
+    # Use the clip's real frame rate to convert the min-scene-length from
+    # seconds to frames; fall back to 24 fps only if probing fails.
+    from .media_probe import probe as _probe
+    fps_hint = 24.0
+    try:
+        fps_hint = _probe(path).frame_rate or 24.0
+    except Exception:
+        fps_hint = 24.0
     min_frames = max(1, int(min_scene_length_sec * fps_hint))
 
     primary_threshold = threshold if threshold is not None else DEFAULT_CONTENT_THRESHOLD
