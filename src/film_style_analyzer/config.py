@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -19,7 +20,10 @@ class Config:
     whisper_model: str = "large-v3"
     language: str = "en"
     scene_detect_threshold: float | None = None
-    min_scene_length_sec: float = 0.5
+    # None = not explicitly set by the user; callers should fall back to the
+    # active genre pack's tuned value (see cli.py `analyze`'s precedence
+    # chain: CLI flag > this config value > genre pack > built-in default).
+    min_scene_length_sec: float | None = None
     anthropic_model: str = "claude-sonnet-4-20250514"
     gemini_model: str = "gemini-2.5-pro"
     thumbnail_quality: int = 2
@@ -43,15 +47,32 @@ def load(path: Path | None = None) -> Config:
         return Config()
     try:
         raw = json.loads(p.read_text())
-    except (json.JSONDecodeError, OSError):
+        if not isinstance(raw, dict):
+            raise ValueError(f"expected a JSON object at the top level, got {type(raw).__name__}")
+    except (json.JSONDecodeError, OSError, ValueError) as e:
+        print(
+            f"warning: could not read config at {p} ({type(e).__name__}: {e}); "
+            "falling back to defaults for all settings",
+            file=sys.stderr,
+        )
         return Config()
     valid = {f for f in Config.__dataclass_fields__}
     filtered = {k: v for k, v in raw.items() if k in valid}
     return Config(**{**asdict(Config()), **filtered})
 
 
-def write_default(path: Path | None = None) -> Path:
+def write_default(path: Path | None = None, *, force: bool = False) -> Path:
+    """Write the default config to `path` (or CONFIG_PATH).
+
+    Refuses to clobber an existing (possibly customized) config unless
+    `force=True` — pass `--force` on the CLI to overwrite intentionally.
+    """
     p = path or CONFIG_PATH
+    if p.exists() and not force:
+        raise FileExistsError(
+            f"config already exists at {p}; pass force=True "
+            "(`film-style config --init --force`) to overwrite it"
+        )
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(asdict(Config()), indent=2))
     return p
