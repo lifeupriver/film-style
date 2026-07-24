@@ -34,13 +34,9 @@ def analyze_music(wav_path: Path, segments: list[dict]) -> dict:
             "librosa not installed. Install with: pip install 'film-style-analyzer[music]'"
         ) from e
 
-    music_segs = [
-        s for s in segments
-        if s.get("type") in ("music", "speech_over_music")
-    ]
+    music_segs = [s for s in segments if s.get("type") in ("music", "speech_over_music")]
     if not music_segs:
-        return {"has_music": False, "tempo_bpm": None, "beats": [],
-                "energy_curve": [], "key": None}
+        return {"has_music": False, "tempo_bpm": None, "beats": [], "energy_curve": [], "key": None}
 
     try:
         y, sr = librosa.load(str(wav_path), sr=22050, mono=True)
@@ -58,9 +54,14 @@ def analyze_music(wav_path: Path, segments: list[dict]) -> dict:
     music_only = y[mask]
     if len(music_only) < sr * 5:
         # Less than 5 seconds — too short for reliable analysis.
-        return {"has_music": True, "tempo_bpm": None, "beats": [],
-                "energy_curve": [], "key": None,
-                "note": "music regions too short for reliable analysis"}
+        return {
+            "has_music": True,
+            "tempo_bpm": None,
+            "beats": [],
+            "energy_curve": [],
+            "key": None,
+            "note": "music regions too short for reliable analysis",
+        }
 
     try:
         tempo, beat_frames = librosa.beat.beat_track(y=music_only, sr=sr)
@@ -131,8 +132,9 @@ def _project_beats_to_timeline(beats_local, music_segs) -> list[float]:
     return out
 
 
-def score_cut_beat_alignment(cut_times: list[float], beats: list[float],
-                             tolerance_sec: float = 0.06) -> dict:
+def score_cut_beat_alignment(
+    cut_times: list[float], beats: list[float], tolerance_sec: float = 0.06
+) -> dict:
     """Given the cut times of a film and the beat times of its music, score
     how often cuts land on (or near) a beat. Returns:
       on_beat: cuts within `tolerance_sec` of a beat
@@ -142,7 +144,9 @@ def score_cut_beat_alignment(cut_times: list[float], beats: list[float],
     """
     if not cut_times or not beats:
         return {
-            "on_beat_pct": 0.0, "on_downbeat_pct": 0.0, "off_beat_pct": 0.0,
+            "on_beat_pct": 0.0,
+            "on_downbeat_pct": 0.0,
+            "off_beat_pct": 0.0,
             "avg_distance_to_nearest_beat_sec": None,
             "tolerance_sec": tolerance_sec,
         }
@@ -179,6 +183,7 @@ def score_cut_beat_alignment(cut_times: list[float], beats: list[float],
 def _nearest(sorted_arr: list[float], target: float) -> float:
     """Closest value in a sorted list to `target`."""
     import bisect
+
     pos = bisect.bisect_left(sorted_arr, target)
     if pos == 0:
         return sorted_arr[0]

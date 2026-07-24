@@ -43,7 +43,7 @@ def _quartile_avgs(durations: list[float]) -> dict[str, float]:
     n = len(durations)
     out = {}
     for i in range(4):
-        chunk = durations[i * n // 4:(i + 1) * n // 4] or [0.0]
+        chunk = durations[i * n // 4 : (i + 1) * n // 4] or [0.0]
         out[f"q{i + 1}_avg_sec"] = round(statistics.fmean(chunk), 2)
     return out
 
@@ -52,7 +52,10 @@ def _decile_avgs(durations: list[float]) -> list[float]:
     if not durations:
         return [0.0] * 10
     n = len(durations)
-    return [round(statistics.fmean(durations[i * n // 10:(i + 1) * n // 10] or [0.0]), 2) for i in range(10)]
+    return [
+        round(statistics.fmean(durations[i * n // 10 : (i + 1) * n // 10] or [0.0]), 2)
+        for i in range(10)
+    ]
 
 
 def analyze_film(
@@ -86,9 +89,7 @@ def analyze_film(
 
     thumbs_dir = thumbs_root / path.stem
     extract_thumbs(path, clips, thumbs_dir)
-    chapters = [
-        ChapterRecord(**vars(c)) for c in group_chapters(clips)
-    ]
+    chapters = [ChapterRecord(**vars(c)) for c in group_chapters(clips)]
 
     audio_data: dict | None = None
     transcript_data: dict | None = None
@@ -108,7 +109,7 @@ def analyze_film(
             logger.warning("color analysis failed for %s: %s", path.name, e)
 
     wav_path: Path | None = None  # kept around for the music pass below
-    audio_dir = (audio_root or (thumbs_root.parent / "audio"))
+    audio_dir = audio_root or (thumbs_root.parent / "audio")
 
     # If music analysis is requested but full audio is skipped, we still need
     # to extract a WAV — just don't run classification or transcription on it.
@@ -116,6 +117,7 @@ def analyze_film(
 
     if need_wav:
         from .audio_extract import AudioExtractError, extract_wav
+
         wav_path = audio_dir / f"{path.stem}.wav"
         try:
             extract_wav(path, wav_path)
@@ -134,7 +136,10 @@ def analyze_film(
 
         try:
             transcript_data = transcribe(
-                wav_path, model_name=whisper_model, language=language, diarize=diarize,
+                wav_path,
+                model_name=whisper_model,
+                language=language,
+                diarize=diarize,
             )
         except TranscribeError as e:
             logger.warning("transcription failed for %s: %s", path.name, e)
@@ -143,18 +148,21 @@ def analyze_film(
     # classification was skipped: we then treat the entire track as music.
     if not skip_music and wav_path is not None:
         from .music_analyze import MusicAnalyzeError, analyze_music, score_cut_beat_alignment
+
         # Prefer real classified music segments. Otherwise treat the whole
         # track as one music segment — for wedding films that's a fair
         # approximation since music is almost always running.
         if audio_data and audio_data.get("segments"):
             segments = audio_data.get("segments")
         else:
-            segments = [{
-                "type": "music",
-                "start_sec": 0.0,
-                "end_sec": meta.duration_sec,
-                "duration_sec": meta.duration_sec,
-            }]
+            segments = [
+                {
+                    "type": "music",
+                    "start_sec": 0.0,
+                    "end_sec": meta.duration_sec,
+                    "duration_sec": meta.duration_sec,
+                }
+            ]
         try:
             music_data = analyze_music(wav_path, segments)
             cut_times = [c.start_sec for c in clips[1:]]
@@ -171,10 +179,15 @@ def analyze_film(
             pass
 
     if run_gemini:
-        from .gemini_analyzer import GeminiError, analyze as run_gemini_analyze
+        from .gemini_analyzer import GeminiError
+        from .gemini_analyzer import analyze as run_gemini_analyze
+
         try:
             gemini_data = run_gemini_analyze(
-                path, pack, duration_sec=meta.duration_sec, cut_count=len(clips),
+                path,
+                pack,
+                duration_sec=meta.duration_sec,
+                cut_count=len(clips),
                 model_name=gemini_model,
             )
         except GeminiError as e:
@@ -216,15 +229,13 @@ def analyze_film(
             transitions.fade_in += 1
     transitions.dissolve_positions_pct = dissolve_positions
 
-    dissolve_boundary_times = [
-        c.end_sec for c in clips if c.transition_out == "dissolve"
-    ]
+    dissolve_boundary_times = [c.end_sec for c in clips if c.transition_out == "dissolve"]
     if dissolve_boundary_times:
         try:
             measured = measure_dissolves(path, dissolve_boundary_times, fps=meta.frame_rate)
-            transitions.avg_dissolve_duration_sec = round(
-                sum(measured) / len(measured), 3
-            ) if measured else 0.0
+            transitions.avg_dissolve_duration_sec = (
+                round(sum(measured) / len(measured), 3) if measured else 0.0
+            )
         except Exception as e:
             logger.warning("dissolve measurement failed for %s: %s", path.name, e)
             transitions.avg_dissolve_duration_sec = 0.5
@@ -236,7 +247,9 @@ def analyze_film(
     structure = Structure(
         opening={
             "first_cut_at_sec": round(clips[0].end_sec, 2) if clips else 0.0,
-            "first_5_clips_avg_duration_sec": round(statistics.fmean(first_5), 2) if first_5 else 0.0,
+            "first_5_clips_avg_duration_sec": round(statistics.fmean(first_5), 2)
+            if first_5
+            else 0.0,
         },
         closing={
             "last_cut_at_sec": round(clips[-1].start_sec, 2) if clips else 0.0,

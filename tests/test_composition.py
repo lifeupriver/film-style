@@ -40,6 +40,7 @@ def _face(x, y, w, h, **kw) -> FaceInfo:
 # Framing classification
 # ---------------------------------------------------------------------------
 
+
 class TestFraming:
     def test_no_person(self):
         assert classify_framing([], None, (720, 1280)) == "no-person"
@@ -84,6 +85,7 @@ class TestFraming:
 # Headroom
 # ---------------------------------------------------------------------------
 
+
 class TestHeadroom:
     def test_too_close_to_top(self):
         mesh = {"forehead": (0.5, 0.02)}
@@ -108,6 +110,7 @@ class TestHeadroom:
 # ---------------------------------------------------------------------------
 # Lead room
 # ---------------------------------------------------------------------------
+
 
 class TestLeadRoom:
     def test_facing_left_with_space_on_left_is_good(self):
@@ -152,6 +155,7 @@ class TestLeadRoom:
 # Rule of thirds
 # ---------------------------------------------------------------------------
 
+
 class TestThirds:
     def test_at_intersection_scores_high(self):
         score = thirds_score((1 / 3, 1 / 3))
@@ -172,6 +176,7 @@ class TestThirds:
 # ---------------------------------------------------------------------------
 # Horizon tilt
 # ---------------------------------------------------------------------------
+
 
 class TestHorizonTilt:
     def test_perfectly_horizontal(self):
@@ -201,6 +206,7 @@ class TestHorizonTilt:
 # ---------------------------------------------------------------------------
 # Exposure
 # ---------------------------------------------------------------------------
+
 
 class TestExposure:
     def test_severely_underexposed(self):
@@ -234,6 +240,7 @@ class TestExposure:
 # Backlit detection
 # ---------------------------------------------------------------------------
 
+
 class TestBacklit:
     def test_dark_face_bright_background(self):
         # Bright background, dark face region in center.
@@ -256,6 +263,7 @@ class TestBacklit:
 # ---------------------------------------------------------------------------
 # Sharpness
 # ---------------------------------------------------------------------------
+
 
 class TestSharpness:
     def test_blurred_image_low_variance(self):
@@ -285,6 +293,7 @@ class TestSharpness:
 # Subject separation
 # ---------------------------------------------------------------------------
 
+
 class TestSubjectSeparation:
     def test_sharp_center_blurred_edges_high_ratio(self):
         # Build a frame with sharp content in the middle, blurred on the edges.
@@ -313,6 +322,7 @@ class TestSubjectSeparation:
 # Motion blur on subject
 # ---------------------------------------------------------------------------
 
+
 class TestMotionBlurSubject:
     def test_blurry_face_sharp_background(self):
         img = np.full((720, 1280, 3), 128, dtype=np.uint8)
@@ -333,6 +343,7 @@ class TestMotionBlurSubject:
 # ---------------------------------------------------------------------------
 # Camera stability
 # ---------------------------------------------------------------------------
+
 
 class TestMotionMagnitude:
     def test_identical_frames_zero_motion(self):
@@ -357,6 +368,7 @@ class TestMotionMagnitude:
 # ---------------------------------------------------------------------------
 # Misc helpers
 # ---------------------------------------------------------------------------
+
 
 class TestHelpers:
     def test_primary_face_center(self):

@@ -21,7 +21,13 @@ def test_thumbnail_path_is_relative_to_data_root(tmp_path: Path):
 
 
 def test_clip_thumbnail_field_assignable():
-    c = Clip(index=0, start_sec=0, end_sec=3, duration_sec=3,
-             transition_in="fade_in", transition_out="hard_cut")
+    c = Clip(
+        index=0,
+        start_sec=0,
+        end_sec=3,
+        duration_sec=3,
+        transition_in="fade_in",
+        transition_out="hard_cut",
+    )
     c.thumbnail = "thumbs/foo/clip_000.jpg"
     assert c.thumbnail == "thumbs/foo/clip_000.jpg"

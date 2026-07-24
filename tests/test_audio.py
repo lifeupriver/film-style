@@ -42,5 +42,5 @@ def test_first_speech_at_zero_is_reported():
     first = speech_segs[0]["start_sec"]
     assert first == 0.0
     # Reproduce the summary computation that previously bugged out:
-    pct = (lambda x: round(100 * x / 100.0, 1))
+    pct = lambda x: round(100 * x / 100.0, 1)
     assert (pct(first) if first is not None else None) == 0.0

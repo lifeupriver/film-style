@@ -55,15 +55,18 @@ def complete(
     if not is_available():
         raise ClaudeCLIError(
             "`claude` CLI not found on PATH. Install Claude Code and run "
-            "`claude auth login`, or set claude_backend=\"api\" in config."
+            '`claude auth login`, or set claude_backend="api" in config.'
         )
 
     full_prompt = f"{system}\n\n{prompt}" if system else prompt
 
     cmd = [
-        "claude", "-p",
-        "--output-format", output_format,
-        "--max-turns", str(max_turns),
+        "claude",
+        "-p",
+        "--output-format",
+        output_format,
+        "--max-turns",
+        str(max_turns),
     ]
 
     try:
@@ -116,6 +119,4 @@ def complete(
                     for block in content:
                         if isinstance(block, dict) and block.get("type") == "text":
                             return block.get("text", "")
-    raise ClaudeCLIError(
-        f"could not extract result from `claude -p` JSON envelope: {out[:300]}"
-    )
+    raise ClaudeCLIError(f"could not extract result from `claude -p` JSON envelope: {out[:300]}")

@@ -26,6 +26,7 @@ from typing import Iterator
 
 class VimeoImportError(RuntimeError):
     """Legacy name. Catch as VideoImportError everywhere new."""
+
     pass
 
 
@@ -56,8 +57,10 @@ def _build_command(
         yt_dlp,
         "--no-playlist-reverse",
         "--ignore-errors",
-        "--output", template,
-        "--format", quality,
+        "--output",
+        template,
+        "--format",
+        quality,
         "--write-info-json",
         "--no-overwrites",
     ]

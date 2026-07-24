@@ -26,12 +26,11 @@ def aggregate(analyses: Iterable[FilmAnalysis]) -> dict:
     # Only films with enough clips to fill every decile (>= 10) contribute,
     # otherwise empty slices were padded with 0.0 and would drag the average.
     deciles = [
-        f.pacing.pacing_curve_by_decile for f in films
+        f.pacing.pacing_curve_by_decile
+        for f in films
         if f.pacing.pacing_curve_by_decile and f.cuts.total >= 10
     ]
-    avg_deciles = (
-        [round(statistics.fmean(col), 2) for col in zip(*deciles)] if deciles else []
-    )
+    avg_deciles = [round(statistics.fmean(col), 2) for col in zip(*deciles)] if deciles else []
 
     first_5_avgs = [f.structure.opening["first_5_clips_avg_duration_sec"] for f in films]
     last_5_avgs = [f.structure.closing["last_5_clips_avg_duration_sec"] for f in films]
@@ -44,9 +43,11 @@ def aggregate(analyses: Iterable[FilmAnalysis]) -> dict:
     audio_summary: dict | None = None
     if with_audio:
         sums = [f.audio["summary"] for f in with_audio]
+
         def _avg(key: str) -> float | None:
             vals = [s.get(key) for s in sums if s.get(key) is not None]
             return round(statistics.fmean(vals), 2) if vals else None
+
         audio_summary = {
             "films_with_audio": len(with_audio),
             "music_only_pct_avg": _avg("music_only_pct"),
@@ -73,7 +74,8 @@ def aggregate(analyses: Iterable[FilmAnalysis]) -> dict:
 
     gemini_excerpts = [
         {"filename": f.film.filename, "analysis": f.gemini_analysis}
-        for f in films if f.gemini_analysis
+        for f in films
+        if f.gemini_analysis
     ]
 
     # Per-scene-label aggregation across films that have chapter labels.
@@ -83,22 +85,30 @@ def aggregate(analyses: Iterable[FilmAnalysis]) -> dict:
         for ch in f.chapters:
             if not ch.label:
                 continue
-            label_buckets.setdefault(ch.label, []).append({
-                "duration_sec": ch.duration_sec,
-                "clip_count": ch.clip_count,
-                "avg_clip_sec": ch.avg_clip_sec,
-            })
+            label_buckets.setdefault(ch.label, []).append(
+                {
+                    "duration_sec": ch.duration_sec,
+                    "clip_count": ch.clip_count,
+                    "avg_clip_sec": ch.avg_clip_sec,
+                }
+            )
     scene_breakdown: list[dict] = []
-    for label, entries in sorted(label_buckets.items(), key=lambda kv: -sum(e["duration_sec"] for e in kv[1])):
+    for label, entries in sorted(
+        label_buckets.items(), key=lambda kv: -sum(e["duration_sec"] for e in kv[1])
+    ):
         total_dur = sum(e["duration_sec"] for e in entries)
-        scene_breakdown.append({
-            "label": label,
-            "occurrences": len(entries),
-            "pct_of_total_runtime": round(100 * total_dur / total_film_seconds, 1),
-            "avg_duration_sec": round(total_dur / len(entries), 2) if entries else 0.0,
-            "avg_clip_count": round(statistics.fmean(e["clip_count"] for e in entries), 1),
-            "avg_clip_duration_sec": round(statistics.fmean(e["avg_clip_sec"] for e in entries), 2),
-        })
+        scene_breakdown.append(
+            {
+                "label": label,
+                "occurrences": len(entries),
+                "pct_of_total_runtime": round(100 * total_dur / total_film_seconds, 1),
+                "avg_duration_sec": round(total_dur / len(entries), 2) if entries else 0.0,
+                "avg_clip_count": round(statistics.fmean(e["clip_count"] for e in entries), 1),
+                "avg_clip_duration_sec": round(
+                    statistics.fmean(e["avg_clip_sec"] for e in entries), 2
+                ),
+            }
+        )
 
     return {
         "film_count": len(films),

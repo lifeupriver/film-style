@@ -105,7 +105,11 @@ def predict_cuts(
 
         snapped = _nearest_beat(beats, ideal)
         snap_used = False
-        if snapped is not None and abs(snapped - ideal) <= snap_tolerance_sec and snapped > t + min_clip_sec * 0.5:
+        if (
+            snapped is not None
+            and abs(snapped - ideal) <= snap_tolerance_sec
+            and snapped > t + min_clip_sec * 0.5
+        ):
             cut_time = snapped
             snap_used = True
         else:
@@ -113,13 +117,15 @@ def predict_cuts(
 
         if cut_time >= runtime:
             break
-        cuts.append({
-            "time_sec": round(cut_time, 3),
-            "ideal_target_sec": round(ideal, 3),
-            "target_clip_dur_sec": round(target_dur, 3),
-            "snapped_to_beat": snap_used,
-            "decile": min(9, int((cut_time / runtime) * 10)) if runtime else 0,
-        })
+        cuts.append(
+            {
+                "time_sec": round(cut_time, 3),
+                "ideal_target_sec": round(ideal, 3),
+                "target_clip_dur_sec": round(target_dur, 3),
+                "snapped_to_beat": snap_used,
+                "decile": min(9, int((cut_time / runtime) * 10)) if runtime else 0,
+            }
+        )
         t = cut_time
 
     on_beat_count = sum(1 for c in cuts if c["snapped_to_beat"])
@@ -137,8 +143,7 @@ def predict_cuts(
 # ---------- FCPXML marker-track export ------------------------------------
 
 
-def to_fcpxml_markers(prediction: dict, *, song_basename: str | None = None,
-                      fps: int = 24) -> str:
+def to_fcpxml_markers(prediction: dict, *, song_basename: str | None = None, fps: int = 24) -> str:
     """Emit a minimal FCPXML 1.10 with a single asset-clip + markers at each
     predicted cut. Imports cleanly into Resolve / Premiere / FCP."""
     duration_sec = prediction["song_duration_sec"]
@@ -146,48 +151,66 @@ def to_fcpxml_markers(prediction: dict, *, song_basename: str | None = None,
 
     fcpxml = ET.Element("fcpxml", {"version": "1.10"})
     resources = ET.SubElement(fcpxml, "resources")
-    fmt = ET.SubElement(resources, "format", {
-        "id": "r1",
-        "name": f"FFVideoFormat{fps}p",
-        "frameDuration": f"100/{fps * 100}s",
-    })
-    asset = ET.SubElement(resources, "asset", {
-        "id": "r2",
-        "name": name,
-        "duration": f"{int(duration_sec * 1000)}/1000s",
-        "hasAudio": "1",
-        "hasVideo": "0",
-        "format": "r1",
-    })
+    fmt = ET.SubElement(
+        resources,
+        "format",
+        {
+            "id": "r1",
+            "name": f"FFVideoFormat{fps}p",
+            "frameDuration": f"100/{fps * 100}s",
+        },
+    )
+    asset = ET.SubElement(
+        resources,
+        "asset",
+        {
+            "id": "r2",
+            "name": name,
+            "duration": f"{int(duration_sec * 1000)}/1000s",
+            "hasAudio": "1",
+            "hasVideo": "0",
+            "format": "r1",
+        },
+    )
     library = ET.SubElement(fcpxml, "library")
     event = ET.SubElement(library, "event", {"name": "Predicted Cuts"})
     project = ET.SubElement(event, "project", {"name": f"{name} — predicted"})
-    sequence = ET.SubElement(project, "sequence", {
-        "duration": f"{int(duration_sec * 1000)}/1000s",
-        "format": "r1",
-        "tcStart": "0s",
-    })
+    sequence = ET.SubElement(
+        project,
+        "sequence",
+        {
+            "duration": f"{int(duration_sec * 1000)}/1000s",
+            "format": "r1",
+            "tcStart": "0s",
+        },
+    )
     spine = ET.SubElement(sequence, "spine")
-    clip = ET.SubElement(spine, "asset-clip", {
-        "name": name,
-        "ref": "r2",
-        "offset": "0s",
-        "duration": f"{int(duration_sec * 1000)}/1000s",
-        "audioRole": "music",
-    })
+    clip = ET.SubElement(
+        spine,
+        "asset-clip",
+        {
+            "name": name,
+            "ref": "r2",
+            "offset": "0s",
+            "duration": f"{int(duration_sec * 1000)}/1000s",
+            "audioRole": "music",
+        },
+    )
 
     for i, c in enumerate(prediction["cuts"]):
-        ET.SubElement(clip, "marker", {
-            "start": f"{int(c['time_sec'] * 1000)}/1000s",
-            "duration": "1/30s",
-            "value": (
-                f"Cut {i + 1:03d} · target {c['target_clip_dur_sec']:.2f}s"
-                + (" · on beat" if c["snapped_to_beat"] else "")
-            ),
-        })
+        ET.SubElement(
+            clip,
+            "marker",
+            {
+                "start": f"{int(c['time_sec'] * 1000)}/1000s",
+                "duration": "1/30s",
+                "value": (
+                    f"Cut {i + 1:03d} · target {c['target_clip_dur_sec']:.2f}s"
+                    + (" · on beat" if c["snapped_to_beat"] else "")
+                ),
+            },
+        )
 
-    return (
-        '<?xml version="1.0" encoding="UTF-8"?>\n'
-        '<!DOCTYPE fcpxml>\n'
-        + ET.tostring(fcpxml, encoding="unicode")
+    return '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE fcpxml>\n' + ET.tostring(
+        fcpxml, encoding="unicode"
     )

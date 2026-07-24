@@ -16,8 +16,10 @@ class ProbeError(RuntimeError):
 def probe(path: Path) -> FilmMeta:
     cmd = [
         "ffprobe",
-        "-v", "error",
-        "-print_format", "json",
+        "-v",
+        "error",
+        "-print_format",
+        "json",
         "-show_format",
         "-show_streams",
         str(path),

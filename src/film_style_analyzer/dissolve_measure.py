@@ -18,6 +18,7 @@ from pathlib import Path
 
 def _open_capture(path: Path):
     import cv2  # type: ignore
+
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         raise RuntimeError(f"cannot open {path}")
@@ -45,21 +46,21 @@ def classify_boundaries(
     """
     results: list[dict] = []
     if not boundary_times_sec or fps <= 0:
-        return [{"type": "hard_cut", "duration_sec": 1.0 / fps if fps > 0 else 0.04}
-                for _ in boundary_times_sec]
+        return [
+            {"type": "hard_cut", "duration_sec": 1.0 / fps if fps > 0 else 0.04}
+            for _ in boundary_times_sec
+        ]
 
     try:
         cap, cv2 = _open_capture(film_path)
     except Exception:
-        return [{"type": "hard_cut", "duration_sec": 1.0 / fps}
-                for _ in boundary_times_sec]
+        return [{"type": "hard_cut", "duration_sec": 1.0 / fps} for _ in boundary_times_sec]
 
     try:
         import numpy as np  # type: ignore
     except ImportError:
         cap.release()
-        return [{"type": "hard_cut", "duration_sec": 1.0 / fps}
-                for _ in boundary_times_sec]
+        return [{"type": "hard_cut", "duration_sec": 1.0 / fps} for _ in boundary_times_sec]
 
     one_frame = 1.0 / fps
     try:
@@ -76,9 +77,9 @@ def classify_boundaries(
                     break
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 if prev_gray is not None:
-                    diffs.append(float(
-                        np.mean(np.abs(gray.astype(np.int16) - prev_gray.astype(np.int16)))
-                    ))
+                    diffs.append(
+                        float(np.mean(np.abs(gray.astype(np.int16) - prev_gray.astype(np.int16))))
+                    )
                 prev_gray = gray
 
             if len(diffs) < 4:
@@ -90,14 +91,13 @@ def classify_boundaries(
             mad_before = sum(diffs[:half]) / max(1, half)
             mad_after = sum(diffs[half:]) / max(1, len(diffs) - half)
             min_side, max_side = min(mad_before, mad_after), max(mad_before, mad_after)
-            if (
-                min_side < still_threshold
-                and max_side > still_threshold * 2
-            ):
-                results.append({
-                    "type": "still_hold",
-                    "duration_sec": one_frame,
-                })
+            if min_side < still_threshold and max_side > still_threshold * 2:
+                results.append(
+                    {
+                        "type": "still_hold",
+                        "duration_sec": one_frame,
+                    }
+                )
                 continue
 
             sorted_diffs = sorted(diffs, reverse=True)
@@ -110,10 +110,12 @@ def classify_boundaries(
 
             plateau_threshold = top1 * 0.6
             plateau_frames = sum(1 for d in diffs if d >= plateau_threshold)
-            results.append({
-                "type": "dissolve",
-                "duration_sec": round(max(plateau_frames / fps, one_frame), 3),
-            })
+            results.append(
+                {
+                    "type": "dissolve",
+                    "duration_sec": round(max(plateau_frames / fps, one_frame), 3),
+                }
+            )
     finally:
         cap.release()
 
@@ -166,9 +168,9 @@ def measure_dissolves(
                     break
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 if prev_gray is not None:
-                    diffs.append(float(
-                        np.mean(np.abs(gray.astype(np.int16) - prev_gray.astype(np.int16)))
-                    ))
+                    diffs.append(
+                        float(np.mean(np.abs(gray.astype(np.int16) - prev_gray.astype(np.int16))))
+                    )
                 prev_gray = gray
 
             if len(diffs) < 3:

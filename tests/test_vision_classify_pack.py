@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from film_style_analyzer import genre_pack
-from film_style_analyzer.vision_classify import build_chapter_system_prompt
 from film_style_analyzer.shot_size import build_shot_system_prompt
+from film_style_analyzer.vision_classify import build_chapter_system_prompt
 
 
 def test_chapter_prompt_uses_pack_labels():

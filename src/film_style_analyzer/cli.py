@@ -7,42 +7,47 @@ from pathlib import Path
 
 import click
 from rich.console import Console
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+from rich.progress import BarColumn, Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
 from rich.table import Table
 
 from . import __version__
 from .aggregator import aggregate
 from .analyzer import analyze_film
-from .config import CONFIG_PATH, load as load_config, write_default as write_default_config
+from .config import config_path
+from .config import load as load_config
+from .config import write_default as write_default_config
 from .fcpxml_parser import parse as parse_fcpxml
+from .genre_pack import load as load_genre_pack
 from .guide_writer import write_guide
+from .paths import (
+    data_root,
+    legacy_layout_present,
+    paths_for_genre,
+)
 from .profile_writer import build_profile
 from .schemas import FilmAnalysis
-from .genre_pack import load as load_genre_pack
 from .vision_classify import VisionError, classify_chapters, gather_existing_examples
 
-DATA_ROOT = Path.home() / ".film-style-analyzer"
-
-
-def _active_genre_at_import() -> str:
-    """Read the active genre from config at module load. Falls back to 'wedding'."""
-    try:
-        return getattr(load_config(), "default_genre", "wedding")
-    except Exception:
-        return "wedding"
-
-
-_GENRE_ROOT = DATA_ROOT / _active_genre_at_import()
-ANALYSES_DIR = _GENRE_ROOT / "analyses"
-THUMBS_DIR = _GENRE_ROOT / "thumbs"
-AUDIO_DIR = _GENRE_ROOT / "audio"
-DEFAULT_GUIDE = _GENRE_ROOT / "style-guide.md"
-DEFAULT_STATS = _GENRE_ROOT / "aggregate-stats.json"
-DEFAULT_PROFILE = _GENRE_ROOT / "style-profile.json"
-DEFAULT_SHOT_PROFILE = DATA_ROOT / "shot-profile.json"
+# Backward-compatible module-level aliases (default genre at import time).
+_default_paths = paths_for_genre()
+ANALYSES_DIR = _default_paths.analyses_dir
+THUMBS_DIR = _default_paths.thumbs_dir
+AUDIO_DIR = _default_paths.audio_dir
+DEFAULT_GUIDE = _default_paths.guide_path
+DEFAULT_STATS = _default_paths.stats_path
+DEFAULT_PROFILE = _default_paths.profile_path
+DEFAULT_SHOT_PROFILE = data_root() / "shot-profile.json"
 SUPPORTED = {".mp4", ".mov", ".m4v", ".mkv"}
 
 console = Console()
+
+
+def _genre_option(f):
+    return click.option(
+        "--genre",
+        default=None,
+        help="Genre workspace (default: config default_genre).",
+    )(f)
 
 
 def _films_in(target: Path) -> list[Path]:
@@ -51,11 +56,11 @@ def _films_in(target: Path) -> list[Path]:
     return sorted(p for p in target.iterdir() if p.suffix.lower() in SUPPORTED)
 
 
-def _load_analyses() -> list[FilmAnalysis]:
-    if not ANALYSES_DIR.exists():
+def _load_analyses(analyses_dir: Path) -> list[FilmAnalysis]:
+    if not analyses_dir.exists():
         return []
     out = []
-    for p in sorted(ANALYSES_DIR.glob("*.json")):
+    for p in sorted(analyses_dir.glob("*.json")):
         try:
             out.append(FilmAnalysis.model_validate_json(p.read_text()))
         except Exception as e:
@@ -63,7 +68,78 @@ def _load_analyses() -> list[FilmAnalysis]:
     return out
 
 
-@click.group()
+def _run_migration(to_genre: str | None = None) -> None:
+    import shutil
+
+    from .paths import LEGACY_LAYOUT_FILES
+
+    if not legacy_layout_present():
+        return
+    target = to_genre or getattr(load_config(), "default_genre", "wedding")
+    target_root = data_root() / target
+    target_root.mkdir(parents=True, exist_ok=True)
+    moved: list[str] = []
+    for name in LEGACY_LAYOUT_FILES:
+        src = data_root() / name
+        if not src.exists():
+            continue
+        dst = target_root / name
+        if dst.exists():
+            console.print(f"[yellow]skip[/yellow] {name} — already exists at {dst}")
+            continue
+        shutil.move(str(src), str(dst))
+        moved.append(name)
+    console.print(f"[green]moved[/green] {len(moved)} items into {target_root}")
+    for m in moved:
+        console.print(f"  • {m}")
+
+
+def _check_migration_or_exit() -> None:
+    if not legacy_layout_present():
+        return
+    import sys
+
+    hint = "Run `film-style migrate --to <genre>` to move legacy data."
+    if sys.stdin.isatty():
+        genre = getattr(load_config(), "default_genre", "wedding")
+        if click.confirm(
+            f"Detected legacy data layout at {data_root()}/analyses/. Move into {genre}/?",
+            default=True,
+        ):
+            _run_migration(genre)
+            return
+    raise click.ClickException(f"Detected legacy data layout (analyses/ at root). {hint}")
+
+
+class FilmStyleGroup(click.Group):
+    """Click group that runs migration guard before each subcommand."""
+
+    def list_commands(self, ctx):
+        return super().list_commands(ctx)
+
+
+_MIGRATION_EXEMPT = frozenset({"migrate", "genre", "config", "version"})
+
+
+def _wrap_migration_check(cmd: click.Command) -> None:
+    if cmd.name in _MIGRATION_EXEMPT:
+        return
+    if isinstance(cmd, click.Group):
+        for sub in cmd.commands.values():
+            _wrap_migration_check(sub)
+        return
+    if cmd.callback is None:
+        return
+    original = cmd.callback
+
+    def guarded(*args, **kwargs):
+        _check_migration_or_exit()
+        return original(*args, **kwargs)
+
+    cmd.callback = guarded
+
+
+@click.group(cls=FilmStyleGroup)
 @click.version_option(__version__)
 def cli() -> None:
     """Analyze finished films and generate per-genre editing style guides.
@@ -77,17 +153,26 @@ def cli() -> None:
 
 @cli.command()
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
-@click.option("--output", type=click.Path(path_type=Path), default=ANALYSES_DIR,
-              help="Where to write analysis JSONs.")
+@click.option(
+    "--output", type=click.Path(path_type=Path), default=None, help="Where to write analysis JSONs."
+)
+@_genre_option
 @click.option("--force", is_flag=True, help="Re-analyze even if JSON exists.")
-@click.option("--min-scene-sec", type=float, default=None,
-              help="Min scene length (sec). Default from config.")
-@click.option("--threshold", type=float, default=None,
-              help="Adaptive scene-detect threshold override.")
+@click.option(
+    "--min-scene-sec", type=float, default=None, help="Min scene length (sec). Default from config."
+)
+@click.option(
+    "--threshold", type=float, default=None, help="Adaptive scene-detect threshold override."
+)
 @click.option("--skip-audio", is_flag=True, help="Skip transcription and audio classification.")
 @click.option("--skip-color", is_flag=True, help="Skip per-clip color analysis.")
-@click.option("--color-every-n", type=int, default=1, show_default=True,
-              help="Analyze color on every Nth clip. Higher = faster.")
+@click.option(
+    "--color-every-n",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Analyze color on every Nth clip. Higher = faster.",
+)
 @click.option("--music/--no-music", default=False, help="Run librosa music characterization.")
 @click.option("--whisper-model", default=None, help="WhisperX model size.")
 @click.option("--language", default=None, help="WhisperX language code.")
@@ -96,15 +181,28 @@ def cli() -> None:
 @click.option("--gemini-model", default=None)
 @click.option("--keep-audio", is_flag=True, help="Keep extracted WAV files after analysis.")
 def analyze(
-    path: Path, output: Path, force: bool, min_scene_sec: float | None,
+    path: Path,
+    output: Path | None,
+    genre: str | None,
+    force: bool,
+    min_scene_sec: float | None,
     threshold: float | None,
-    skip_audio: bool, skip_color: bool, color_every_n: int, music: bool,
-    whisper_model: str | None, language: str | None, no_diarize: bool,
-    gemini: bool, gemini_model: str | None, keep_audio: bool,
+    skip_audio: bool,
+    skip_color: bool,
+    color_every_n: int,
+    music: bool,
+    whisper_model: str | None,
+    language: str | None,
+    no_diarize: bool,
+    gemini: bool,
+    gemini_model: str | None,
+    keep_audio: bool,
 ) -> None:
     """Analyze one or more finished films."""
+    gp = paths_for_genre(genre)
+    output = output or gp.analyses_dir
     cfg = load_config()
-    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
+    pack = load_genre_pack(gp.genre)
     min_scene_sec = min_scene_sec if min_scene_sec is not None else cfg.min_scene_length_sec
     threshold = threshold if threshold is not None else cfg.scene_detect_threshold
     whisper_model = whisper_model or cfg.whisper_model
@@ -116,7 +214,7 @@ def analyze(
         raise click.ClickException(f"no supported video files found at {path}")
 
     output.mkdir(parents=True, exist_ok=True)
-    THUMBS_DIR.mkdir(parents=True, exist_ok=True)
+    gp.thumbs_dir.mkdir(parents=True, exist_ok=True)
 
     with Progress(
         SpinnerColumn(),
@@ -136,8 +234,10 @@ def analyze(
             progress.update(task, description=f"analyzing {film.name}")
             try:
                 result = analyze_film(
-                    film, THUMBS_DIR, pack,
-                    audio_root=AUDIO_DIR,
+                    film,
+                    gp.thumbs_dir,
+                    pack,
+                    audio_root=gp.audio_dir,
                     min_scene_length_sec=min_scene_sec,
                     threshold=threshold,
                     skip_audio=skip_audio,
@@ -160,45 +260,68 @@ def analyze(
                 if result.gemini_analysis:
                     extras.append("gemini✓")
                 tail = (" " + " ".join(extras)) if extras else ""
-                console.print(f"[green]ok[/green] {film.name} — {result.cuts.total} clips, "
-                              f"avg {result.pacing.avg_clip_duration_sec}s{tail}")
+                console.print(
+                    f"[green]ok[/green] {film.name} — {result.cuts.total} clips, "
+                    f"avg {result.pacing.avg_clip_duration_sec}s{tail}"
+                )
             except Exception as e:
                 console.print(f"[red]fail[/red] {film.name}: {e}")
             progress.advance(task)
 
 
 @cli.command()
-@click.option("--output", type=click.Path(path_type=Path), default=DEFAULT_GUIDE)
-@click.option("--profile-output", type=click.Path(path_type=Path), default=DEFAULT_PROFILE,
-              help="Where to write style-profile.json (consumed by downstream AI tools).")
+@click.option("--output", type=click.Path(path_type=Path), default=None)
+@click.option(
+    "--profile-output",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Where to write style-profile.json (consumed by downstream AI tools).",
+)
+@_genre_option
 @click.option("--model", default=None)
-@click.option("--include-gemini/--no-include-gemini", default=True,
-              help="Include Gemini qualitative analyses if available.")
-@click.option("--vision", is_flag=True,
-              help="Use Claude vision to label chapter scene types from thumbnails.")
-@click.option("--shot-sizes", is_flag=True,
-              help="Use Claude vision to label per-clip shot sizes (slower; uses more API calls).")
-def guide(output: Path, profile_output: Path, model: str | None,
-          include_gemini: bool, vision: bool, shot_sizes: bool) -> None:
+@click.option(
+    "--include-gemini/--no-include-gemini",
+    default=True,
+    help="Include Gemini qualitative analyses if available.",
+)
+@click.option(
+    "--vision", is_flag=True, help="Use Claude vision to label chapter scene types from thumbnails."
+)
+@click.option(
+    "--shot-sizes",
+    is_flag=True,
+    help="Use Claude vision to label per-clip shot sizes (slower; uses more API calls).",
+)
+def guide(
+    output: Path | None,
+    profile_output: Path | None,
+    genre: str | None,
+    model: str | None,
+    include_gemini: bool,
+    vision: bool,
+    shot_sizes: bool,
+) -> None:
     """Generate the editing style guide from analyzed films."""
+    gp = paths_for_genre(genre)
+    output = output or gp.guide_path
+    profile_output = profile_output or gp.profile_path
     cfg = load_config()
     model = model or cfg.anthropic_model
-    analyses = _load_analyses()
+    analyses = _load_analyses(gp.analyses_dir)
     if not analyses:
         raise click.ClickException("no analyses found — run `film-style analyze <path>` first")
 
-    pack = load_genre_pack(cfg.default_genre if hasattr(cfg, "default_genre") else "wedding")
+    pack = load_genre_pack(gp.genre)
     if vision:
         console.print("[bold]Vision pass[/bold] — classifying chapter scene types…")
-        # Gather already-labeled chapters across the archive as few-shot examples.
-        examples = gather_existing_examples(ANALYSES_DIR, DATA_ROOT)
+        examples = gather_existing_examples(gp.analyses_dir, data_root())
         if examples:
             console.print(f"  [dim]using {len(examples)} prior labels as few-shot reference[/dim]")
         for a in analyses:
             unlabeled = [c for c in a.chapters if not c.label and c.representative_thumbnail]
             if not unlabeled:
                 continue
-            thumb_paths = [DATA_ROOT / c.representative_thumbnail for c in unlabeled]
+            thumb_paths = [data_root() / c.representative_thumbnail for c in unlabeled]
             try:
                 labels = classify_chapters(thumb_paths, pack, model=model, examples=examples)
             except VisionError as e:
@@ -206,19 +329,20 @@ def guide(output: Path, profile_output: Path, model: str | None,
                 continue
             for ch, label in zip(unlabeled, labels):
                 ch.label = label
-            (ANALYSES_DIR / f"{Path(a.film.filename).stem}.json").write_text(
+            (gp.analyses_dir / f"{Path(a.film.filename).stem}.json").write_text(
                 a.model_dump_json(indent=2)
             )
             console.print(f"  [green]labeled[/green] {a.film.filename}: {len(labels)} chapters")
 
     if shot_sizes:
         from .shot_size import ShotSizeError, classify_shots
+
         console.print("[bold]Shot-size pass[/bold] — classifying per-clip composition…")
         for a in analyses:
             unlabeled = [c for c in a.cuts.clips if not c.shot_size and c.thumbnail]
             if not unlabeled:
                 continue
-            thumb_paths = [DATA_ROOT / c.thumbnail for c in unlabeled]
+            thumb_paths = [data_root() / c.thumbnail for c in unlabeled]
             try:
                 labels = classify_shots(thumb_paths, pack, model=model)
             except ShotSizeError as e:
@@ -226,7 +350,7 @@ def guide(output: Path, profile_output: Path, model: str | None,
                 continue
             for clip, label in zip(unlabeled, labels):
                 clip.shot_size = label
-            (ANALYSES_DIR / f"{Path(a.film.filename).stem}.json").write_text(
+            (gp.analyses_dir / f"{Path(a.film.filename).stem}.json").write_text(
                 a.model_dump_json(indent=2)
             )
             console.print(f"  [green]labeled[/green] {a.film.filename}: {len(labels)} clips")
@@ -234,38 +358,42 @@ def guide(output: Path, profile_output: Path, model: str | None,
     stats = aggregate(analyses)
     if not include_gemini:
         stats = {**stats, "gemini_analyses": []}
-    DATA_ROOT.mkdir(parents=True, exist_ok=True)
-    DEFAULT_STATS.write_text(json.dumps(stats, indent=2))
+    data_root().mkdir(parents=True, exist_ok=True)
+    gp.stats_path.write_text(json.dumps(stats, indent=2))
 
-    # Write the structured JSON profile FIRST — that artifact is what
-    # downstream AI tools consume, and it's deterministic (no API call).
     profile = build_profile(analyses, stats, pack=pack)
     profile_output.parent.mkdir(parents=True, exist_ok=True)
     profile_output.write_text(json.dumps(profile, indent=2, default=str))
     console.print(f"[green]wrote[/green] {profile_output} ({len(profile.get('rules', []))} rules)")
 
     console.print(f"[bold]Aggregated[/bold] {stats['film_count']} films → calling Claude…")
-    md = write_guide(stats, pack, model=model,
-                     backend=getattr(cfg, "claude_backend", "api"))
+    md = write_guide(stats, pack, model=model, backend=getattr(cfg, "claude_backend", "api"))
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(md)
     console.print(f"[green]wrote[/green] {output}")
 
 
 @cli.command()
-def stats() -> None:
+@_genre_option
+def stats(genre: str | None) -> None:
     """Print quick stats summary."""
-    analyses = _load_analyses()
+    gp = paths_for_genre(genre)
+    analyses = _load_analyses(gp.analyses_dir)
     if not analyses:
         raise click.ClickException("no analyses found")
     s = aggregate(analyses)
     console.print(f"Films analyzed: {s['film_count']}")
-    console.print(f"Avg duration: {s['duration']['avg_sec']}s "
-                  f"(range {s['duration']['min_sec']}-{s['duration']['max_sec']})")
-    console.print(f"Avg clips/film: {s['clip_counts']['avg']} "
-                  f"(range {s['clip_counts']['min']}-{s['clip_counts']['max']})")
-    console.print(f"Avg clip duration: {s['pacing']['avg_clip_sec']}s "
-                  f"(σ {s['pacing']['std_dev_sec']})")
+    console.print(
+        f"Avg duration: {s['duration']['avg_sec']}s "
+        f"(range {s['duration']['min_sec']}-{s['duration']['max_sec']})"
+    )
+    console.print(
+        f"Avg clips/film: {s['clip_counts']['avg']} "
+        f"(range {s['clip_counts']['min']}-{s['clip_counts']['max']})"
+    )
+    console.print(
+        f"Avg clip duration: {s['pacing']['avg_clip_sec']}s (σ {s['pacing']['std_dev_sec']})"
+    )
     t = s["transitions"]
     parts = [
         f"{t['hard_cut_pct']}% hard cut",
@@ -277,16 +405,22 @@ def stats() -> None:
     console.print("Transitions: " + ", ".join(parts))
     if s.get("audio"):
         a = s["audio"]
-        console.print(f"First speech at: {a['first_speech_at_pct_avg']}% into film "
-                      f"(~{a['first_speech_at_sec_avg']}s)")
-        console.print(f"Speech % of film: {a['speech_over_music_pct_avg']}% over music, "
-                      f"{a['speech_only_pct_avg']}% solo")
+        console.print(
+            f"First speech at: {a['first_speech_at_pct_avg']}% into film "
+            f"(~{a['first_speech_at_sec_avg']}s)"
+        )
+        console.print(
+            f"Speech % of film: {a['speech_over_music_pct_avg']}% over music, "
+            f"{a['speech_only_pct_avg']}% solo"
+        )
 
 
 @cli.command(name="list")
-def list_cmd() -> None:
+@_genre_option
+def list_cmd(genre: str | None) -> None:
     """List all analyzed films."""
-    analyses = _load_analyses()
+    gp = paths_for_genre(genre)
+    analyses = _load_analyses(gp.analyses_dir)
     if not analyses:
         raise click.ClickException("no analyses found")
     table = Table(show_header=True, header_style="bold")
@@ -309,8 +443,11 @@ def list_cmd() -> None:
         if any(c.label for c in a.chapters):
             extras.append("vision")
         table.add_row(
-            str(i), a.film.filename, f"{mins}:{secs:02d}",
-            str(a.cuts.total), f"{a.pacing.avg_clip_duration_sec}s",
+            str(i),
+            a.film.filename,
+            f"{mins}:{secs:02d}",
+            str(a.cuts.total),
+            f"{a.pacing.avg_clip_duration_sec}s",
             ",".join(extras) or "—",
             a.analyzed_at.date().isoformat(),
         )
@@ -319,11 +456,13 @@ def list_cmd() -> None:
 
 @cli.command()
 @click.argument("fcpxml_path", type=click.Path(exists=True, path_type=Path))
-def compare(fcpxml_path: Path) -> None:
+@_genre_option
+def compare(fcpxml_path: Path, genre: str | None) -> None:
     """Compare a rough-cut FCPXML against the established style profile."""
-    if not DEFAULT_STATS.exists():
+    gp = paths_for_genre(genre)
+    if not gp.stats_path.exists():
         raise click.ClickException("no aggregate stats — run `film-style guide` first")
-    profile = json.loads(DEFAULT_STATS.read_text())
+    profile = json.loads(gp.stats_path.read_text())
     cut = parse_fcpxml(fcpxml_path)
 
     console.rule(f"Style Comparison: {fcpxml_path.name}")
@@ -335,21 +474,29 @@ def compare(fcpxml_path: Path) -> None:
     mins, secs = divmod(int(dur), 60)
     in_range = pdur["min_sec"] <= dur <= pdur["max_sec"]
     badge = "[green]✓[/green]" if in_range else "[yellow]⚠[/yellow]"
-    console.print(f"DURATION  {mins}:{secs:02d}  "
-                  f"(profile {int(pdur['min_sec'])}s–{int(pdur['max_sec'])}s)  {badge}")
+    console.print(
+        f"DURATION  {mins}:{secs:02d}  "
+        f"(profile {int(pdur['min_sec'])}s–{int(pdur['max_sec'])}s)  {badge}"
+    )
 
     # Clip count
     expected_clips = profile["clip_counts"]["avg"]
-    delta_clips = (cut["clip_count"] - expected_clips) / expected_clips * 100 if expected_clips else 0
-    console.print(f"CLIPS     {cut['clip_count']}  (profile avg {expected_clips})  "
-                  f"{'+' if delta_clips >= 0 else ''}{delta_clips:.0f}%")
+    delta_clips = (
+        (cut["clip_count"] - expected_clips) / expected_clips * 100 if expected_clips else 0
+    )
+    console.print(
+        f"CLIPS     {cut['clip_count']}  (profile avg {expected_clips})  "
+        f"{'+' if delta_clips >= 0 else ''}{delta_clips:.0f}%"
+    )
 
     # Avg clip duration
     expected_avg = profile["pacing"]["avg_clip_sec"]
     actual_avg = cut["avg_clip_sec"]
     delta_pace = (actual_avg - expected_avg) / expected_avg * 100 if expected_avg else 0
-    console.print(f"AVG CLIP  {actual_avg:.2f}s  (profile {expected_avg}s)  "
-                  f"{'+' if delta_pace >= 0 else ''}{delta_pace:.0f}%")
+    console.print(
+        f"AVG CLIP  {actual_avg:.2f}s  (profile {expected_avg}s)  "
+        f"{'+' if delta_pace >= 0 else ''}{delta_pace:.0f}%"
+    )
 
     # Dissolves
     expected_diss = profile["transitions"].get("avg_dissolves_per_film") or 0
@@ -362,8 +509,8 @@ def compare(fcpxml_path: Path) -> None:
     if expected_deciles and durations:
         n = len(durations)
         actual_deciles = [
-            sum(durations[i * n // 10:(i + 1) * n // 10] or [0.0])
-            / max(1, len(durations[i * n // 10:(i + 1) * n // 10]))
+            sum(durations[i * n // 10 : (i + 1) * n // 10] or [0.0])
+            / max(1, len(durations[i * n // 10 : (i + 1) * n // 10]))
             for i in range(10)
         ]
         console.print("\nPACING CURVE (decile)")
@@ -374,14 +521,18 @@ def compare(fcpxml_path: Path) -> None:
                 if abs(d) > 25:
                     tag = f"  [yellow]{'+' if d >= 0 else ''}{d:.0f}%[/yellow]"
                     pacing_deviations.append((i, a, e))
-            console.print(f"  {i*10:>3}-{(i+1)*10:<3}%  actual {a:.2f}s  profile {e:.2f}s{tag}")
+            console.print(
+                f"  {i * 10:>3}-{(i + 1) * 10:<3}%  actual {a:.2f}s  profile {e:.2f}s{tag}"
+            )
 
     # Audio (FCPXML).
     audio = cut.get("audio") or {}
     if audio.get("has_audio"):
-        console.print(f"\nAUDIO TRACK  {audio['audio_clip_count']} clips, "
-                      f"{audio['audio_total_duration_sec']}s"
-                      + (f"  roles: {', '.join(audio['audio_roles'])}" if audio['audio_roles'] else ""))
+        console.print(
+            f"\nAUDIO TRACK  {audio['audio_clip_count']} clips, "
+            f"{audio['audio_total_duration_sec']}s"
+            + (f"  roles: {', '.join(audio['audio_roles'])}" if audio["audio_roles"] else "")
+        )
     else:
         console.print("\nAUDIO TRACK  none detected in FCPXML")
 
@@ -398,7 +549,7 @@ def compare(fcpxml_path: Path) -> None:
     for i, actual_d, expected_d in pacing_deviations:
         direction = "tighten" if actual_d > expected_d else "lengthen"
         suggestions.append(
-            f"{direction} clips at {i*10}-{(i+1)*10}% mark "
+            f"{direction} clips at {i * 10}-{(i + 1) * 10}% mark "
             f"({actual_d:.2f}s → {expected_d:.2f}s)"
         )
     if suggestions:
@@ -411,19 +562,20 @@ def compare(fcpxml_path: Path) -> None:
 
 @cli.command()
 @click.argument("stem")
-@click.option("--top", default=3, show_default=True,
-              help="How many similar films to return.")
-def match(stem: str, top: int) -> None:
+@click.option("--top", default=3, show_default=True, help="How many similar films to return.")
+@_genre_option
+def match(stem: str, top: int, genre: str | None) -> None:
     """Find the films in the archive most stylistically similar to STEM."""
     from .matchmaker import biggest_differences, find_similar
 
-    target_path = ANALYSES_DIR / f"{stem}.json"
+    gp = paths_for_genre(genre)
+    target_path = gp.analyses_dir / f"{stem}.json"
     if not target_path.exists():
         raise click.ClickException(f"no analysis at {target_path}")
     target = FilmAnalysis.model_validate_json(target_path.read_text())
 
     archive: list[FilmAnalysis] = []
-    for p in sorted(ANALYSES_DIR.glob("*.json")):
+    for p in sorted(gp.analyses_dir.glob("*.json")):
         try:
             archive.append(FilmAnalysis.model_validate_json(p.read_text()))
         except Exception:
@@ -431,7 +583,7 @@ def match(stem: str, top: int) -> None:
 
     matches = find_similar(target, archive, top_n=top)
     if not matches:
-        console.print(f"[yellow]No other films in the archive to compare against.[/yellow]")
+        console.print("[yellow]No other films in the archive to compare against.[/yellow]")
         return
 
     console.rule(f"Most similar to {target.film.filename}")
@@ -442,8 +594,7 @@ def match(stem: str, top: int) -> None:
             f"(distance {m['distance']:.3f})"
         )
         # Show the top-2 dimensions where they differ most.
-        target_film = next((f for f in archive
-                            if f.film.filename == m["filename"]), None)
+        target_film = next((f for f in archive if f.film.filename == m["filename"]), None)
         if target_film:
             diffs = biggest_differences(target, target_film, top_n=2)
             for d in diffs:
@@ -452,20 +603,28 @@ def match(stem: str, top: int) -> None:
 
 @cli.command()
 @click.argument("stem")
-@click.option("--set", "set_", multiple=True, metavar="KEY=VALUE",
-              help="Set or update a metadata field. Repeatable.")
-@click.option("--unset", multiple=True, metavar="KEY",
-              help="Remove a metadata field. Repeatable.")
+@click.option(
+    "--set",
+    "set_",
+    multiple=True,
+    metavar="KEY=VALUE",
+    help="Set or update a metadata field. Repeatable.",
+)
+@click.option("--unset", multiple=True, metavar="KEY", help="Remove a metadata field. Repeatable.")
 @click.option("--show", is_flag=True, help="Print existing tags and exit.")
-def tag(stem: str, set_: tuple[str, ...], unset: tuple[str, ...], show: bool) -> None:
+@_genre_option
+def tag(
+    stem: str, set_: tuple[str, ...], unset: tuple[str, ...], show: bool, genre: str | None
+) -> None:
     """View / edit per-film metadata (venue, season, music genre, etc.)."""
-    from .metadata import curated_keys, parse_set_arg, merge as merge_md
+    from .metadata import curated_keys, parse_set_arg
+    from .metadata import merge as merge_md
 
-    cfg = load_config()
-    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
+    gp = paths_for_genre(genre)
+    pack = load_genre_pack(gp.genre)
     keys = curated_keys(pack)
 
-    target = ANALYSES_DIR / f"{stem}.json"
+    target = gp.analyses_dir / f"{stem}.json"
     if not target.exists():
         raise click.ClickException(f"no analysis at {target}")
 
@@ -504,29 +663,55 @@ def tag(stem: str, set_: tuple[str, ...], unset: tuple[str, ...], show: bool) ->
 
 @cli.command(name="predict-cuts")
 @click.argument("song", type=click.Path(exists=True, path_type=Path))
-@click.option("--profile", type=click.Path(path_type=Path), default=DEFAULT_PROFILE,
-              show_default=True, help="style-profile.json to read pacing from.")
-@click.option("--output", "-o", type=click.Path(path_type=Path), default=None,
-              help="Write FCPXML marker track to this path. Default: <song>.predicted.fcpxml")
-@click.option("--target-duration-sec", type=float, default=None,
-              help="Stop predicting after this many seconds of song.")
-@click.option("--snap-tolerance-sec", type=float, default=0.12, show_default=True,
-              help="How close to a beat counts as 'snapped'.")
-def predict_cuts_cmd(song: Path, profile: Path, output: Path | None,
-                     target_duration_sec: float | None, snap_tolerance_sec: float) -> None:
+@click.option(
+    "--profile",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="style-profile.json to read pacing from.",
+)
+@_genre_option
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Write FCPXML marker track to this path. Default: <song>.predicted.fcpxml",
+)
+@click.option(
+    "--target-duration-sec",
+    type=float,
+    default=None,
+    help="Stop predicting after this many seconds of song.",
+)
+@click.option(
+    "--snap-tolerance-sec",
+    type=float,
+    default=0.12,
+    show_default=True,
+    help="How close to a beat counts as 'snapped'.",
+)
+def predict_cuts_cmd(
+    song: Path,
+    profile: Path | None,
+    genre: str | None,
+    output: Path | None,
+    target_duration_sec: float | None,
+    snap_tolerance_sec: float,
+) -> None:
     """Predict cut times for a song in your established style. Emits FCPXML."""
     from .predict_cuts import PredictCutsError, predict_cuts, to_fcpxml_markers
 
+    gp = paths_for_genre(genre)
+    profile = profile or gp.profile_path
     if not profile.exists():
-        raise click.ClickException(
-            f"no style profile at {profile}. Run `film-style guide` first."
-        )
+        raise click.ClickException(f"no style profile at {profile}. Run `film-style guide` first.")
     profile_data = json.loads(profile.read_text())
 
     console.print(f"[bold]Predicting cuts[/bold] for {song.name}")
     try:
         result = predict_cuts(
-            song, profile_data,
+            song,
+            profile_data,
             target_duration_sec=target_duration_sec,
             snap_tolerance_sec=snap_tolerance_sec,
         )
@@ -545,19 +730,30 @@ def predict_cuts_cmd(song: Path, profile: Path, output: Path | None,
 
 @cli.command(name="import")
 @click.argument("url")
-@click.option("--output", "-o", type=click.Path(path_type=Path),
-              default=Path.home() / "films" / "imports",
-              show_default=True, help="Where downloaded MP4s land.")
-@click.option("--cookies-browser",
-              type=click.Choice(["safari", "chrome", "firefox", "edge", "brave",
-                                 "vivaldi", "chromium", "opera"]),
-              help="Read cookies from this browser to access private videos.")
-@click.option("--quality", default="bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-              help="yt-dlp -f format string.")
-@click.option("--no-archive", is_flag=True,
-              help="Don't maintain a re-run-safe download archive.")
-def import_videos(url: str, output: Path, cookies_browser: str | None,
-                  quality: str, no_archive: bool) -> None:
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    default=Path.home() / "films" / "imports",
+    show_default=True,
+    help="Where downloaded MP4s land.",
+)
+@click.option(
+    "--cookies-browser",
+    type=click.Choice(
+        ["safari", "chrome", "firefox", "edge", "brave", "vivaldi", "chromium", "opera"]
+    ),
+    help="Read cookies from this browser to access private videos.",
+)
+@click.option(
+    "--quality",
+    default="bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+    help="yt-dlp -f format string.",
+)
+@click.option("--no-archive", is_flag=True, help="Don't maintain a re-run-safe download archive.")
+def import_videos(
+    url: str, output: Path, cookies_browser: str | None, quality: str, no_archive: bool
+) -> None:
     """Download videos from a URL — Vimeo, YouTube, or any yt-dlp source.
 
     \b
@@ -575,7 +771,8 @@ def import_videos(url: str, output: Path, cookies_browser: str | None,
 
     try:
         for line in download(
-            url, output,
+            url,
+            output,
             cookies_browser=cookies_browser,
             quality=quality,
             archive=not no_archive,
@@ -593,68 +790,91 @@ def import_videos(url: str, output: Path, cookies_browser: str | None,
 @click.pass_context
 def _legacy_import_vimeo(ctx, url: str) -> None:
     """Deprecated; use `film-style import` instead."""
-    ctx.invoke(import_videos, url=url, output=Path.home() / "films" / "imports",
-               cookies_browser=None,
-               quality="bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-               no_archive=False)
+    ctx.invoke(
+        import_videos,
+        url=url,
+        output=Path.home() / "films" / "imports",
+        cookies_browser=None,
+        quality="bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        no_archive=False,
+    )
 
 
 @cli.command()
-@click.option("--host", default="127.0.0.1", show_default=True,
-              help="Interface to bind. Loopback by default — local-only.")
-@click.option("--port", default=7421, show_default=True, type=int,
-              help="Port to bind.")
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    help="Interface to bind. Loopback by default — local-only.",
+)
+@click.option("--port", default=7421, show_default=True, type=int, help="Port to bind.")
 @click.option("--no-browser", is_flag=True, help="Don't auto-open the browser.")
-def serve(host: str, port: int, no_browser: bool) -> None:
+@click.option(
+    "--insecure-public",
+    is_flag=True,
+    help="Allow binding to non-loopback interfaces (not recommended).",
+)
+@_genre_option
+def serve(host: str, port: int, no_browser: bool, insecure_public: bool, genre: str | None) -> None:
     """Open the Atelier dashboard in your browser."""
+    if host not in ("127.0.0.1", "localhost") and not insecure_public:
+        raise click.ClickException(
+            "Refusing to bind to a public interface. "
+            "Use --host 127.0.0.1 or pass --insecure-public to override."
+        )
     from .server import serve as _serve
-    _serve(host=host, port=port, open_browser=not no_browser)
+
+    _serve(host=host, port=port, open_browser=not no_browser, genre=genre)
 
 
 @cli.command(name="export-notebooklm")
-@click.option("--output", "-o", type=click.Path(path_type=Path),
-              default=_GENRE_ROOT / "notebooklm-brief.md",
-              show_default=True, help="Where to write the brief.")
-@click.option("--no-inspirations", is_flag=True,
-              help="Omit saved YouTube inspirations.")
-def export_notebooklm(output: Path, no_inspirations: bool) -> None:
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Where to write the brief.",
+)
+@_genre_option
+@click.option("--no-inspirations", is_flag=True, help="Omit saved YouTube inspirations.")
+def export_notebooklm(output: Path | None, genre: str | None, no_inspirations: bool) -> None:
     """Export a markdown brief suitable for ingesting into NotebookLM."""
     from .notebooklm_export import write_brief
 
+    gp = paths_for_genre(genre)
+    output = output or gp.notebooklm_path
     cfg = load_config()
-    pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
+    pack = load_genre_pack(gp.genre)
     analyses: list[FilmAnalysis] = []
-    for p in sorted(ANALYSES_DIR.glob("*.json")):
+    for p in sorted(gp.analyses_dir.glob("*.json")):
         try:
             analyses.append(FilmAnalysis.model_validate_json(p.read_text()))
         except Exception:
             continue
     if not analyses:
-        raise click.ClickException(
-            "no analyses found — run `film-style analyze` first."
-        )
+        raise click.ClickException("no analyses found — run `film-style analyze` first.")
 
     profile: dict = {}
-    if DEFAULT_PROFILE.is_file():
+    if gp.profile_path.is_file():
         try:
-            profile = json.loads(DEFAULT_PROFILE.read_text())
+            profile = json.loads(gp.profile_path.read_text())
         except json.JSONDecodeError:
             profile = {}
 
     inspirations = None
     if not no_inspirations:
-        ins_path = _GENRE_ROOT / "inspirations.json"
-        if ins_path.is_file():
+        if gp.inspirations_path.is_file():
             try:
-                inspirations = json.loads(ins_path.read_text())
+                inspirations = json.loads(gp.inspirations_path.read_text())
             except json.JSONDecodeError:
                 inspirations = None
 
-    write_brief(analyses, profile, output, pack,
-                inspirations=inspirations, brand_name=cfg.brand_name)
+    write_brief(
+        analyses, profile, output, pack, inspirations=inspirations, brand_name=cfg.brand_name
+    )
     console.print(f"[green]wrote[/green] {output}")
     console.print(
-        f"  Open it, copy its contents, and in NotebookLM click "
+        "  Open it, copy its contents, and in NotebookLM click "
         "[bold]+ Add source[/bold] → [bold]Paste text[/bold]."
     )
 
@@ -668,6 +888,7 @@ def mcp_serve() -> None:
     Do not run this command manually in a terminal; the MCP client launches it.
     """
     from .mcp_server import MCPServerError, run_stdio
+
     try:
         run_stdio()
     except MCPServerError as e:
@@ -675,26 +896,35 @@ def mcp_serve() -> None:
 
 
 @cli.command(name="learn-shots")
-@click.option("--films", default=None,
-              help="Comma-separated list of film stems (or filenames) to limit "
-                   "analysis to. Default: all analyzed films.")
-@click.option("--output", type=click.Path(path_type=Path), default=DEFAULT_SHOT_PROFILE,
-              show_default=True, help="Where to write shot-profile.json.")
+@click.option(
+    "--films",
+    default=None,
+    help="Comma-separated list of film stems (or filenames) to limit "
+    "analysis to. Default: all analyzed films.",
+)
+@click.option(
+    "--output",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Where to write shot-profile.json.",
+)
+@_genre_option
 @click.option("--force", is_flag=True, help="Rebuild even if shot-profile.json exists.")
-def learn_shots(films: str | None, output: Path, force: bool) -> None:
+def learn_shots(films: str | None, output: Path | None, genre: str | None, force: bool) -> None:
     """Learn the editor's compositional + emotional preferences from the
     thumbnail frames of every analyzed film."""
     from .shot_profile import learn_from_thumbnails, write_profile
 
+    gp = paths_for_genre(genre)
+    output = output or data_root() / "shot-profile.json"
     if output.exists() and not force:
         raise click.ClickException(
             f"shot profile already exists at {output}; pass --force to rebuild."
         )
 
-    if not THUMBS_DIR.exists():
+    if not gp.thumbs_dir.exists():
         raise click.ClickException(
-            f"no thumbnails found at {THUMBS_DIR}. "
-            "Run `film-style analyze <path>` first."
+            f"no thumbnails found at {gp.thumbs_dir}. Run `film-style analyze <path>` first."
         )
 
     film_list = [s.strip() for s in films.split(",")] if films else None
@@ -710,12 +940,13 @@ def learn_shots(films: str | None, output: Path, force: bool) -> None:
         task = progress.add_task("learning shots", total=1)
 
         def cb(seen: int, total: int, name: str) -> None:
-            progress.update(task, total=total, completed=seen,
-                            description=f"learning {name}")
+            progress.update(task, total=total, completed=seen, description=f"learning {name}")
 
         try:
             profile = learn_from_thumbnails(
-                THUMBS_DIR, films=film_list, progress_cb=cb,
+                gp.thumbs_dir,
+                films=film_list,
+                progress_cb=cb,
             )
         except FileNotFoundError as e:
             raise click.ClickException(str(e))
@@ -732,34 +963,64 @@ def learn_shots(films: str | None, output: Path, force: bool) -> None:
 
 @cli.command(name="score-clips")
 @click.argument("path", type=click.Path(exists=True, path_type=Path))
-@click.option("--output", type=click.Path(path_type=Path), default=None,
-              help="Where to write clip-scores.json. Default: alongside clips.")
-@click.option("--shot-profile", "shot_profile_path",
-              type=click.Path(exists=True, path_type=Path),
-              default=DEFAULT_SHOT_PROFILE, show_default=True,
-              help="Path to shot-profile.json to score against.")
-@click.option("--detect-trims", is_flag=True,
-              help="Find usable portion of each clip (trim shaky/soft starts/ends).")
-@click.option("--samples-per-clip", type=int, default=5, show_default=True,
-              help="Frames sampled per clip for analysis.")
-@click.option("--scene-context", type=click.Path(exists=True, path_type=Path),
-              default=None,
-              help="JSON map {clip_filename: scene_label} for per-scene "
-                   "emotion weighting.")
-@click.option("--transcripts", type=click.Path(exists=True, path_type=Path),
-              default=None,
-              help="JSON map {clip_filename: transcript_obj} from WhisperX, "
-                   "for speech-bound trim detection.")
-def score_clips(path: Path, output: Path | None, shot_profile_path: Path,
-                detect_trims: bool, samples_per_clip: int,
-                scene_context: Path | None, transcripts: Path | None) -> None:
+@click.option(
+    "--output",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Where to write clip-scores.json. Default: alongside clips.",
+)
+@click.option(
+    "--shot-profile",
+    "shot_profile_path",
+    type=click.Path(exists=True, path_type=Path),
+    default=DEFAULT_SHOT_PROFILE,
+    show_default=True,
+    help="Path to shot-profile.json to score against.",
+)
+@click.option(
+    "--detect-trims",
+    is_flag=True,
+    help="Find usable portion of each clip (trim shaky/soft starts/ends).",
+)
+@click.option(
+    "--samples-per-clip",
+    type=int,
+    default=5,
+    show_default=True,
+    help="Frames sampled per clip for analysis.",
+)
+@click.option(
+    "--scene-context",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="JSON map {clip_filename: scene_label} for per-scene emotion weighting.",
+)
+@click.option(
+    "--transcripts",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="JSON map {clip_filename: transcript_obj} from WhisperX, for speech-bound trim detection.",
+)
+@_genre_option
+def score_clips(
+    path: Path,
+    output: Path | None,
+    shot_profile_path: Path,
+    detect_trims: bool,
+    samples_per_clip: int,
+    scene_context: Path | None,
+    transcripts: Path | None,
+    genre: str | None,
+) -> None:
     """Score raw footage clips against the learned shot profile."""
     from .clip_scoring import score_directory, write_scores
 
+    gp = paths_for_genre(genre)
+    pack = load_genre_pack(gp.genre)
+
     if not shot_profile_path.exists():
         raise click.ClickException(
-            f"no shot profile at {shot_profile_path}. "
-            "Run `film-style learn-shots` first."
+            f"no shot profile at {shot_profile_path}. Run `film-style learn-shots` first."
         )
 
     profile = json.loads(shot_profile_path.read_text())
@@ -785,15 +1046,16 @@ def score_clips(path: Path, output: Path | None, shot_profile_path: Path,
         task = progress.add_task("scoring clips", total=1)
 
         def cb(seen: int, total: int, name: str) -> None:
-            progress.update(task, total=total, completed=seen,
-                            description=f"scoring {name}")
+            progress.update(task, total=total, completed=seen, description=f"scoring {name}")
 
         result = score_directory(
-            path, profile,
+            path,
+            profile,
             samples_per_clip=samples_per_clip,
             detect_trims_flag=detect_trims,
             scene_context=scene_map,
             transcripts=transcript_map,
+            emotion_scene_weights=pack.emotion_scene_weights,
             progress_cb=cb,
         )
 
@@ -813,7 +1075,7 @@ def config(init: bool) -> None:
         console.print(f"[green]wrote[/green] {path}")
         return
     cfg = load_config()
-    console.print(f"Config path: {CONFIG_PATH} (exists: {CONFIG_PATH.exists()})")
+    console.print(f"Config path: {config_path()} (exists: {config_path().exists()})")
     for k, v in cfg.__dict__.items():
         console.print(f"  {k} = {v}")
 
@@ -821,6 +1083,7 @@ def config(init: bool) -> None:
 # ---------------------------------------------------------------------------
 # Genre command group
 # ---------------------------------------------------------------------------
+
 
 @cli.group()
 def genre() -> None:
@@ -831,6 +1094,7 @@ def genre() -> None:
 def genre_list() -> None:
     """List available genre packs (shipped + user)."""
     from .genre_pack import SHIPPED_PACK_DIR, USER_PACK_DIR, list_available
+
     table = Table(title="Available genre packs")
     table.add_column("Name")
     table.add_column("Source")
@@ -852,6 +1116,7 @@ def genre_list() -> None:
 def genre_show(name: str) -> None:
     """Print a pack's contents."""
     from .genre_pack import GenrePackError
+
     try:
         pack = load_genre_pack(name)
     except GenrePackError as e:
@@ -875,11 +1140,33 @@ def genre_current() -> None:
     console.print(getattr(cfg, "default_genre", "wedding"))
 
 
+@genre.command("use")
+@click.argument("name")
+def genre_use(name: str) -> None:
+    """Set the active genre in config (persists default_genre)."""
+    from .genre_pack import GenrePackError
+
+    try:
+        load_genre_pack(name)
+    except GenrePackError as e:
+        raise click.ClickException(str(e))
+    cfg = load_config()
+    from dataclasses import asdict, replace
+
+    from . import config
+
+    updated = replace(load_config(), default_genre=name)
+    config.config_path().parent.mkdir(parents=True, exist_ok=True)
+    config.config_path().write_text(json.dumps(asdict(updated), indent=2))
+    console.print(f"[green]active genre[/green] → {name}")
+
+
 @genre.command("init")
 @click.argument("name")
 def genre_init(name: str) -> None:
     """Scaffold a new user pack at ~/.film-style-analyzer/genre_packs/<name>.toml."""
     from .genre_pack import SHIPPED_PACK_DIR, USER_PACK_DIR
+
     USER_PACK_DIR.mkdir(parents=True, exist_ok=True)
     target = USER_PACK_DIR / f"{name}.toml"
     if target.exists():
@@ -900,40 +1187,21 @@ def genre_init(name: str) -> None:
 # Migration: legacy flat layout → per-genre subfolders
 # ---------------------------------------------------------------------------
 
-LEGACY_LAYOUT_FILES = (
-    "analyses", "thumbs", "audio",
-    "inspirations.json", "aggregate-stats.json",
-    "style-profile.json", "style-guide.md", "notebooklm-brief.md",
-)
-
-
-def _legacy_layout_present() -> bool:
-    """True iff legacy flat layout (analyses/ at root) is detected."""
-    return (DATA_ROOT / "analyses").is_dir()
-
 
 @cli.command()
-@click.option("--to", "to_genre", default=None,
-              help="Genre to migrate legacy data into. Default: config default_genre.")
+@click.option(
+    "--to",
+    "to_genre",
+    default=None,
+    help="Genre to migrate legacy data into. Default: config default_genre.",
+)
 def migrate(to_genre: str | None) -> None:
     """Move legacy flat layout into ~/.film-style-analyzer/<genre>/."""
-    import shutil
-    if not _legacy_layout_present():
+    if not legacy_layout_present():
         raise click.ClickException("no legacy layout detected; nothing to migrate.")
-    target = to_genre or getattr(load_config(), "default_genre", "wedding")
-    target_root = DATA_ROOT / target
-    target_root.mkdir(parents=True, exist_ok=True)
-    moved: list[str] = []
-    for name in LEGACY_LAYOUT_FILES:
-        src = DATA_ROOT / name
-        if not src.exists():
-            continue
-        dst = target_root / name
-        if dst.exists():
-            console.print(f"[yellow]skip[/yellow] {name} — already exists at {dst}")
-            continue
-        shutil.move(str(src), str(dst))
-        moved.append(name)
-    console.print(f"[green]moved[/green] {len(moved)} items into {target_root}")
-    for m in moved:
-        console.print(f"  • {m}")
+    _run_migration(to_genre)
+
+
+# Register migration guard on all commands after they are defined.
+for _cmd in cli.commands.values():
+    _wrap_migration_check(_cmd)

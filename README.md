@@ -66,7 +66,17 @@ Works for **wedding films, commercials, brand content, social shorts,
 music videos, and documentaries** — each shipped as a pluggable "genre
 pack" that adapts vocabulary, prompts, and tuned numeric defaults to
 the editorial conventions of that genre. One genre per workspace; switch
-by editing one config field.
+with `film-style genre use commercial` or the `--genre` flag on any command.
+
+### PyPI install
+
+```bash
+pip install film-style-analyzer
+film-style --help
+```
+
+See [CHANGELOG.md](CHANGELOG.md) for release notes and [PRIVACY.md](PRIVACY.md)
+for what stays local vs optional cloud APIs.
 
 A bundled web dashboard renders the corpus visually, and an MCP server
 exposes the whole pipeline to Claude Desktop so you can ask Claude to
@@ -596,13 +606,11 @@ pip install -e '.[dev]' --break-system-packages
 pytest
 ```
 
-250+ unit tests covering schema validity, aggregation, transition
-classification, profile generation, MCP tool dispatch, dashboard endpoints,
+270+ unit tests covering schema validity, aggregation, transition
+classification, profile generation, MCP tool dispatch, dashboard HTTP API,
 matchmaker similarity, predict-cuts, NotebookLM brief, metadata tagging,
-FCPXML parsing, and the full shot-composition / emotion / scoring stack
-(framing, headroom, lead room, thirds, exposure, sharpness, subject
-separation, motion blur, optical flow, emotion weighting, scene
-weighting, hard rejections, soft penalties, and trim detection).
+FCPXML parsing, genre workspaces, migration, and the shot-composition /
+emotion / scoring stack.
 
 For real-media smoke tests, drop a 30-second video in `tests/fixtures/` and
 run `pytest --real-media tests/fixtures/sample.mp4`.
@@ -616,3 +624,7 @@ PRs welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for setup and conventions.
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Privacy
+
+See [PRIVACY.md](PRIVACY.md).

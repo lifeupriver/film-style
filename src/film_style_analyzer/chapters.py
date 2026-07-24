@@ -37,19 +37,21 @@ def group(clips: list[Clip]) -> list[Chapter]:
     for i, c in enumerate(clips):
         ends_chapter = c.transition_out in ("dissolve", "fade_out") or i == len(clips) - 1
         if ends_chapter:
-            run = clips[start:i + 1]
+            run = clips[start : i + 1]
             durations = [r.duration_sec for r in run]
             mid = run[len(run) // 2]
-            chapters.append(Chapter(
-                index=len(chapters),
-                start_clip=run[0].index,
-                end_clip=run[-1].index,
-                start_sec=run[0].start_sec,
-                end_sec=run[-1].end_sec,
-                duration_sec=round(run[-1].end_sec - run[0].start_sec, 2),
-                clip_count=len(run),
-                avg_clip_sec=round(statistics.fmean(durations), 2) if durations else 0.0,
-                representative_thumbnail=mid.thumbnail,
-            ))
+            chapters.append(
+                Chapter(
+                    index=len(chapters),
+                    start_clip=run[0].index,
+                    end_clip=run[-1].index,
+                    start_sec=run[0].start_sec,
+                    end_sec=run[-1].end_sec,
+                    duration_sec=round(run[-1].end_sec - run[0].start_sec, 2),
+                    clip_count=len(run),
+                    avg_clip_sec=round(statistics.fmean(durations), 2) if durations else 0.0,
+                    representative_thumbnail=mid.thumbnail,
+                )
+            )
             start = i + 1
     return chapters

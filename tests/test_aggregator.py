@@ -2,45 +2,76 @@ from datetime import datetime, timezone
 
 from film_style_analyzer.aggregator import aggregate
 from film_style_analyzer.schemas import (
-    ChapterRecord, Clip, Cuts, FilmAnalysis, FilmMeta, Pacing, Structure, Transitions,
+    ChapterRecord,
+    Clip,
+    Cuts,
+    FilmAnalysis,
+    FilmMeta,
+    Pacing,
+    Structure,
+    Transitions,
 )
 
 
-def _mk(filename: str, duration: float, clip_specs: list[tuple[float, float, str]],
-        chapters: list[ChapterRecord] | None = None,
-        audio: dict | None = None) -> FilmAnalysis:
+def _mk(
+    filename: str,
+    duration: float,
+    clip_specs: list[tuple[float, float, str]],
+    chapters: list[ChapterRecord] | None = None,
+    audio: dict | None = None,
+) -> FilmAnalysis:
     clips = []
     for i, (start, end, t_out) in enumerate(clip_specs):
-        clips.append(Clip(
-            index=i, start_sec=start, end_sec=end,
-            duration_sec=end - start,
-            transition_in="hard_cut" if i > 0 else "fade_in",
-            transition_out=t_out,
-        ))
+        clips.append(
+            Clip(
+                index=i,
+                start_sec=start,
+                end_sec=end,
+                duration_sec=end - start,
+                transition_in="hard_cut" if i > 0 else "fade_in",
+                transition_out=t_out,
+            )
+        )
     durations = [c.duration_sec for c in clips]
     avg = sum(durations) / len(durations) if durations else 0.0
     return FilmAnalysis(
         analyzed_at=datetime.now(timezone.utc),
         analyzer_version="test",
-        film=FilmMeta(filename=filename, path=f"/tmp/{filename}", duration_sec=duration,
-                      resolution="1920x1080", frame_rate=24.0, codec="h264"),
+        film=FilmMeta(
+            filename=filename,
+            path=f"/tmp/{filename}",
+            duration_sec=duration,
+            resolution="1920x1080",
+            frame_rate=24.0,
+            codec="h264",
+        ),
         cuts=Cuts(total=len(clips), timestamps_sec=[c.start_sec for c in clips], clips=clips),
         pacing=Pacing(
-            avg_clip_duration_sec=avg, median_clip_duration_sec=avg,
-            std_dev_sec=0.0, min_clip_sec=min(durations) if durations else 0,
+            avg_clip_duration_sec=avg,
+            median_clip_duration_sec=avg,
+            std_dev_sec=0.0,
+            min_clip_sec=min(durations) if durations else 0,
             max_clip_sec=max(durations) if durations else 0,
-            clip_duration_histogram={}, pacing_curve_by_quartile={},
+            clip_duration_histogram={},
+            pacing_curve_by_quartile={},
             pacing_curve_by_decile=[avg] * 10,
         ),
-        transitions=Transitions(hard_cut=sum(1 for c in clips if c.transition_out == "hard_cut"),
-                                dissolve=sum(1 for c in clips if c.transition_out == "dissolve")),
+        transitions=Transitions(
+            hard_cut=sum(1 for c in clips if c.transition_out == "hard_cut"),
+            dissolve=sum(1 for c in clips if c.transition_out == "dissolve"),
+        ),
         chapters=chapters or [],
         structure=Structure(
-            opening={"first_cut_at_sec": clip_specs[0][1] if clip_specs else 0,
-                     "first_5_clips_avg_duration_sec": avg},
-            closing={"last_cut_at_sec": clip_specs[-1][0] if clip_specs else 0,
-                     "last_5_clips_avg_duration_sec": avg, "fade_to_black": True,
-                     "fade_duration_sec": 2.0},
+            opening={
+                "first_cut_at_sec": clip_specs[0][1] if clip_specs else 0,
+                "first_5_clips_avg_duration_sec": avg,
+            },
+            closing={
+                "last_cut_at_sec": clip_specs[-1][0] if clip_specs else 0,
+                "last_5_clips_avg_duration_sec": avg,
+                "fade_to_black": True,
+                "fade_duration_sec": 2.0,
+            },
         ),
         audio=audio,
     )
@@ -58,27 +89,54 @@ def test_aggregate_basic_counts():
 
 def test_aggregate_scene_breakdown():
     chapters = [
-        ChapterRecord(index=0, start_clip=0, end_clip=1, start_sec=0, end_sec=10,
-                      duration_sec=10, clip_count=2, avg_clip_sec=5.0, label="ceremony"),
-        ChapterRecord(index=1, start_clip=2, end_clip=3, start_sec=10, end_sec=20,
-                      duration_sec=10, clip_count=2, avg_clip_sec=5.0, label="dancing"),
+        ChapterRecord(
+            index=0,
+            start_clip=0,
+            end_clip=1,
+            start_sec=0,
+            end_sec=10,
+            duration_sec=10,
+            clip_count=2,
+            avg_clip_sec=5.0,
+            label="ceremony",
+        ),
+        ChapterRecord(
+            index=1,
+            start_clip=2,
+            end_clip=3,
+            start_sec=10,
+            end_sec=20,
+            duration_sec=10,
+            clip_count=2,
+            avg_clip_sec=5.0,
+            label="dancing",
+        ),
     ]
-    f = _mk("a.mp4", 20.0, [(0, 5, "hard_cut"), (5, 10, "dissolve"),
-                             (10, 15, "hard_cut"), (15, 20, "hard_cut")],
-           chapters=chapters)
+    f = _mk(
+        "a.mp4",
+        20.0,
+        [(0, 5, "hard_cut"), (5, 10, "dissolve"), (10, 15, "hard_cut"), (15, 20, "hard_cut")],
+        chapters=chapters,
+    )
     s = aggregate([f])
     labels = {x["label"] for x in s["scene_breakdown"]}
     assert labels == {"ceremony", "dancing"}
 
 
 def test_aggregate_audio_summary():
-    audio = {"summary": {
-        "music_only_pct": 60.0, "speech_over_music_pct": 25.0,
-        "speech_only_pct": 5.0, "ambient_pct": 10.0,
-        "first_speech_at_pct": 16.0, "first_speech_at_sec": 60.0,
-        "avg_speech_segment_sec": 30.0, "longest_speech_segment_sec": 40.0,
-        "speech_segment_count": 3,
-    }}
+    audio = {
+        "summary": {
+            "music_only_pct": 60.0,
+            "speech_over_music_pct": 25.0,
+            "speech_only_pct": 5.0,
+            "ambient_pct": 10.0,
+            "first_speech_at_pct": 16.0,
+            "first_speech_at_sec": 60.0,
+            "avg_speech_segment_sec": 30.0,
+            "longest_speech_segment_sec": 40.0,
+            "speech_segment_count": 3,
+        }
+    }
     f = _mk("a.mp4", 360.0, [(0, 5, "hard_cut")], audio=audio)
     s = aggregate([f])
     assert s["audio"]["films_with_audio"] == 1

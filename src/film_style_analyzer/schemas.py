@@ -8,13 +8,13 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 TransitionType = Literal[
-    "hard_cut",     # single-frame jump in pixel content
-    "dissolve",     # gradual blend across multiple frames
-    "fade_in",      # opening fade from black
-    "fade_out",     # closing fade to black
-    "still_hold",   # boundary where one side is a held still photograph
-                    # (near-zero inter-frame motion). Common in wedding-film
-                    # editing where the editor intersperses photos with motion.
+    "hard_cut",  # single-frame jump in pixel content
+    "dissolve",  # gradual blend across multiple frames
+    "fade_in",  # opening fade from black
+    "fade_out",  # closing fade to black
+    "still_hold",  # boundary where one side is a held still photograph
+    # (near-zero inter-frame motion). Common in wedding-film
+    # editing where the editor intersperses photos with motion.
 ]
 
 
@@ -78,12 +78,12 @@ class Clip(BaseModel):
     transition_in: TransitionType
     transition_out: TransitionType
     thumbnail: str | None = None
-    shot_size: str | None = None       # populated by --shot-sizes
-    color: dict | None = None          # populated by color analysis pass
+    shot_size: str | None = None  # populated by --shot-sizes
+    color: dict | None = None  # populated by color analysis pass
     shot_description: ShotDescription | None = None  # what's in the frame
-                                                     # (subjects, action,
-                                                     # setting, lighting,
-                                                     # camera, mood, free text)
+    # (subjects, action,
+    # setting, lighting,
+    # camera, mood, free text)
 
 
 class Cuts(BaseModel):
@@ -144,6 +144,6 @@ class FilmAnalysis(BaseModel):
     transcript: dict | None = None
     structure: Structure
     gemini_analysis: dict | None = None
-    color: dict | None = None          # film-level color summary
-    music: dict | None = None          # tempo/beats/energy from C
+    color: dict | None = None  # film-level color summary
+    music: dict | None = None  # tempo/beats/energy from C
     metadata: dict = Field(default_factory=dict)  # per-wedding tags (G)

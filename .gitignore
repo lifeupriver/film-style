@@ -6,6 +6,8 @@ venv/
 build/
 dist/
 .pytest_cache/
+.coverage
+.ruff_cache/
 .DS_Store
 
 # Editor / IDE

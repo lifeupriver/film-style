@@ -6,7 +6,15 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-CONFIG_PATH = Path.home() / ".film-style-analyzer" / "config.json"
+
+def config_path() -> Path:
+    return Path.home() / ".film-style-analyzer" / "config.json"
+
+
+def __getattr__(name: str):
+    if name == "CONFIG_PATH":
+        return config_path()
+    raise AttributeError(name)
 
 
 @dataclass
@@ -38,7 +46,7 @@ class Config:
 
 
 def load(path: Path | None = None) -> Config:
-    p = path or CONFIG_PATH
+    p = path or config_path()
     if not p.exists():
         return Config()
     try:
@@ -51,7 +59,7 @@ def load(path: Path | None = None) -> Config:
 
 
 def write_default(path: Path | None = None) -> Path:
-    p = path or CONFIG_PATH
+    p = path or config_path()
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(asdict(Config()), indent=2))
     return p

@@ -40,7 +40,7 @@ def _extract_json(text: str) -> dict:
     start = payload.find("{")
     end = payload.rfind("}")
     if start >= 0 and end > start:
-        payload = payload[start:end + 1]
+        payload = payload[start : end + 1]
     return json.loads(payload)
 
 
@@ -102,8 +102,13 @@ def analyze_youtube_url(
     }
 
 
-def analyze(film_path: Path, pack: GenrePack, duration_sec: float, cut_count: int,
-            model_name: str = "gemini-2.5-pro") -> dict:
+def analyze(
+    film_path: Path,
+    pack: GenrePack,
+    duration_sec: float,
+    cut_count: int,
+    model_name: str = "gemini-2.5-pro",
+) -> dict:
     api_key = os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise GeminiError("GOOGLE_API_KEY (or GEMINI_API_KEY) not set")

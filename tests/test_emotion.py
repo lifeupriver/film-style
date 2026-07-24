@@ -8,8 +8,7 @@ from film_style_analyzer.emotion import (
 
 
 def _df_face(dominant="happy", **emotions):
-    base = {"happy": 0, "surprise": 0, "sad": 0, "neutral": 0,
-            "angry": 0, "fear": 0, "disgust": 0}
+    base = {"happy": 0, "surprise": 0, "sad": 0, "neutral": 0, "angry": 0, "fear": 0, "disgust": 0}
     base.update(emotions)
     return {"dominant_emotion": dominant, "emotion": base}
 
@@ -17,6 +16,7 @@ def _df_face(dominant="happy", **emotions):
 # ---------------------------------------------------------------------------
 # Per-frame scoring
 # ---------------------------------------------------------------------------
+
 
 class TestEmotionScoring:
     def test_smiling_face_scores_high(self):
@@ -63,20 +63,21 @@ class TestEmotionScoring:
 # Multi-face bonus
 # ---------------------------------------------------------------------------
 
+
 class TestMultiFaceBonus:
     def test_two_happy_faces_score_higher_than_one(self):
         single = _score_emotion_payload(_df_face("happy", happy=70.0))
-        double = _score_emotion_payload([
-            _df_face("happy", happy=70.0),
-            _df_face("happy", happy=70.0),
-        ])
+        double = _score_emotion_payload(
+            [
+                _df_face("happy", happy=70.0),
+                _df_face("happy", happy=70.0),
+            ]
+        )
         assert double["wedding_emotion_score"] > single["wedding_emotion_score"]
         assert double["multi_face_bonus"] == 5
 
     def test_three_faces_bonus_capped(self):
-        result = _score_emotion_payload([
-            _df_face("happy", happy=80.0) for _ in range(5)
-        ])
+        result = _score_emotion_payload([_df_face("happy", happy=80.0) for _ in range(5)])
         # Bonus capped at 3 extra faces * 5 = 15.
         assert result["multi_face_bonus"] == 15
 
@@ -88,6 +89,7 @@ class TestMultiFaceBonus:
 # ---------------------------------------------------------------------------
 # Per-clip aggregation: PEAK not average
 # ---------------------------------------------------------------------------
+
 
 class TestClipAggregation:
     def test_peak_used_not_average(self):
@@ -124,6 +126,7 @@ class TestClipAggregation:
 # ---------------------------------------------------------------------------
 # Scene-aware weighting
 # ---------------------------------------------------------------------------
+
 
 class TestSceneWeights:
     def test_ceremony_weighted_above_one(self):

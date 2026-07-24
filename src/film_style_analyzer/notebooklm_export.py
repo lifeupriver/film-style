@@ -13,7 +13,6 @@ similar-film clusters, and any saved YouTube inspirations.
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,9 +23,7 @@ from .schemas import FilmAnalysis
 
 def build_brief_intro(pack: GenrePack, brand_name: str, n: int) -> str:
     """Render the per-genre opening paragraph using the pack's prompt template."""
-    return pack.prompts["notebooklm_brief_intro"].format(
-        brand_name=brand_name, n=n
-    )
+    return pack.prompts["notebooklm_brief_intro"].format(brand_name=brand_name, n=n)
 
 
 def export_brief(
@@ -75,15 +72,15 @@ def export_brief(
         out.append("## Pacing Curve")
         out.append("")
         out.append(
-            f"Across the run-time, the editor's average clip duration moves as "
-            f"follows (each value is the mean clip duration in that decile of "
-            f"the film):"
+            "Across the run-time, the editor's average clip duration moves as "
+            "follows (each value is the mean clip duration in that decile of "
+            "the film):"
         )
         out.append("")
         out.append("| Position | Avg clip |")
         out.append("|---|---|")
         for i, v in enumerate(decile):
-            out.append(f"| {i*10}–{(i+1)*10}% | {v:.2f}s |")
+            out.append(f"| {i * 10}–{(i + 1) * 10}% | {v:.2f}s |")
         out.append("")
         # Plain-English summary of the curve shape.
         if len(decile) >= 4:
@@ -150,8 +147,7 @@ def export_brief(
         wc = color.get("mean_warm_cool", 0) or 0
         tendency = "warm" if wc > 0.1 else ("cool" if wc < -0.1 else "neutral")
         out.append(
-            f"- Grade leans **{tendency}** "
-            f"(warm/cool index {wc:+.2f}, range −1 cool to +1 warm)."
+            f"- Grade leans **{tendency}** (warm/cool index {wc:+.2f}, range −1 cool to +1 warm)."
         )
         if color.get("mean_luminance") is not None:
             out.append(
@@ -164,8 +160,8 @@ def export_brief(
             out.append(f"- Dominant palette across the corpus: {sample}.")
         if color.get("tone_labels_seen"):
             seen = ", ".join(
-                f"{k} ({v})" for k, v in
-                sorted(color["tone_labels_seen"].items(), key=lambda kv: -kv[1])[:5]
+                f"{k} ({v})"
+                for k, v in sorted(color["tone_labels_seen"].items(), key=lambda kv: -kv[1])[:5]
             )
             out.append(f"- Tone labels observed: {seen}.")
         out.append("")
@@ -217,8 +213,7 @@ def export_brief(
         out.append("")
         out.append("| Scene | Avg duration | Avg clips | Avg clip dur |")
         out.append("|---|---|---|---|")
-        for label, s in sorted(scenes.items(),
-                                 key=lambda kv: -kv[1]["pct_of_total_runtime"]):
+        for label, s in sorted(scenes.items(), key=lambda kv: -kv[1]["pct_of_total_runtime"]):
             out.append(
                 f"| {label.replace('_', ' ')} | "
                 f"{s['avg_duration_sec']:.1f}s | {s['avg_clip_count']:.0f} | "
@@ -259,18 +254,13 @@ def export_brief(
         out.append("")
         for ex in excerpts:
             out.append(f"> {ex['text']}")
-            out.append(
-                f"_— {ex['filename']}, "
-                f"{ex['start_sec']:.0f}s – {ex['end_sec']:.0f}s_"
-            )
+            out.append(f"_— {ex['filename']}, {ex['start_sec']:.0f}s – {ex['end_sec']:.0f}s_")
             out.append("")
 
     # ---- 11. Source films ----
     out.append("## Source Films")
     out.append("")
-    out.append(
-        f"This profile was built from {len(films)} films. Per-film summaries:"
-    )
+    out.append(f"This profile was built from {len(films)} films. Per-film summaries:")
     out.append("")
     for f in films:
         meta = f.metadata or {}
@@ -297,8 +287,14 @@ def export_brief(
             out.append(f"### {ins['url']}")
             out.append("")
             ana = ins.get("analysis") or {}
-            for k in ("pacing", "shot_selection", "audio_design", "color_grade",
-                      "structure", "relevance"):
+            for k in (
+                "pacing",
+                "shot_selection",
+                "audio_design",
+                "color_grade",
+                "structure",
+                "relevance",
+            ):
                 v = ana.get(k)
                 if v:
                     label = k.replace("_", " ").title()
@@ -342,12 +338,14 @@ def _gather_top_transcript_excerpts(
             text = (s.get("text") or "").strip()
             if not text:
                 continue
-            out.append({
-                "filename": f.film.filename,
-                "start_sec": s.get("start_sec") or 0,
-                "end_sec": s.get("end_sec") or 0,
-                "text": text,
-            })
+            out.append(
+                {
+                    "filename": f.film.filename,
+                    "start_sec": s.get("start_sec") or 0,
+                    "end_sec": s.get("end_sec") or 0,
+                    "text": text,
+                }
+            )
             if len(out) >= max_total:
                 return out
     return out
@@ -365,7 +363,6 @@ def write_brief(
 ) -> Path:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(
-        export_brief(films, profile, pack, inspirations,
-                     title=title, brand_name=brand_name)
+        export_brief(films, profile, pack, inspirations, title=title, brand_name=brand_name)
     )
     return output_path

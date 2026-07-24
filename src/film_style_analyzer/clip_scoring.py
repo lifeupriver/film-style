@@ -19,12 +19,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
-import numpy as np
 
 from . import __version__
 from .composition import analyze_frame, motion_magnitude
 from .emotion import (
-    EMOTION_SCENE_WEIGHT,
     aggregate_clip_emotions,
     analyze_emotions,
 )
@@ -48,6 +46,7 @@ HARD_REJECTIONS: dict[str, callable] = {
 # ---------------------------------------------------------------------------
 # Soft penalties.
 # ---------------------------------------------------------------------------
+
 
 def collect_penalties(clip: dict, has_person: bool) -> list[dict]:
     p: list[dict] = []
@@ -78,9 +77,7 @@ def collect_penalties(clip: dict, has_person: bool) -> list[dict]:
         p.append({"name": "backlit_subject", "value": -15})
 
     tilt = clip.get("horizon_tilt_degrees")
-    if (tilt is not None
-            and clip.get("horizon_lines_detected")
-            and abs(tilt) > 3):
+    if tilt is not None and clip.get("horizon_lines_detected") and abs(tilt) > 3:
         p.append({"name": "horizon_tilted", "value": -10})
 
     if has_person:
@@ -108,9 +105,13 @@ def collect_penalties(clip: dict, has_person: bool) -> list[dict]:
 # Composite scoring.
 # ---------------------------------------------------------------------------
 
-def compute_clip_score(clip: dict,
-                       shot_profile: dict,
-                       scene: str | None = None) -> tuple[int, str | None]:
+
+def compute_clip_score(
+    clip: dict,
+    shot_profile: dict,
+    scene: str | None = None,
+    emotion_scene_weights: dict[str, float] | None = None,
+) -> tuple[int, str | None]:
     """Returns (score 0-100, hard_rejection_reason or None)."""
     for name, test in HARD_REJECTIONS.items():
         try:
@@ -134,8 +135,7 @@ def compute_clip_score(clip: dict,
         if clip.get("faces_detected", 0) > 0:
             score += 10
             avg_size = (
-                shot_profile.get("face_presence", {})
-                .get("primary_face_avg_size_pct", 0) or 0
+                shot_profile.get("face_presence", {}).get("primary_face_avg_size_pct", 0) or 0
             )
             if clip.get("face_size_pct", 0) >= avg_size * 0.5:
                 score += 5
@@ -168,7 +168,10 @@ def compute_clip_score(clip: dict,
 
     # ---- Emotion (up to +15, scene-weighted) ----
     if has_person:
-        peak = clip.get("emotion", {}).get("peak_wedding_emotion", 0)
+        peak = clip.get("emotion", {}).get(
+            "peak_emotion_score",
+            clip.get("emotion", {}).get("peak_wedding_emotion", 0),
+        )
         if peak > 60:
             boost = 15
         elif peak > 40:
@@ -177,7 +180,12 @@ def compute_clip_score(clip: dict,
             boost = 5
         else:
             boost = 0
-        weight = EMOTION_SCENE_WEIGHT.get(scene, 1.0) if scene else 1.0
+        if emotion_scene_weights is not None:
+            weight = emotion_scene_weights.get(scene, 1.0) if scene else 1.0
+        else:
+            from .emotion import EMOTION_SCENE_WEIGHT
+
+            weight = EMOTION_SCENE_WEIGHT.get(scene, 1.0) if scene else 1.0
         score += int(boost * weight)
 
     # ---- Soft penalties ----
@@ -191,6 +199,7 @@ def compute_clip_score(clip: dict,
 # Aggregating per-clip frame results.
 # ---------------------------------------------------------------------------
 
+
 def _median_or_none(values: list, default=None):
     if not values:
         return default
@@ -199,8 +208,7 @@ def _median_or_none(values: list, default=None):
     return statistics.median(values)
 
 
-def aggregate_clip_frames(frames: list[dict],
-                          motion_values: list[float]) -> dict:
+def aggregate_clip_frames(frames: list[dict], motion_values: list[float]) -> dict:
     """Combine a clip's per-frame detector outputs into a single record.
     Median for composition (resilient to outliers), peak for emotion."""
     if not frames:
@@ -222,12 +230,14 @@ def aggregate_clip_frames(frames: list[dict],
     face_size = med("face_size_pct", 0.0, restrict_to_person=True) or 0.0
     headroom = med("headroom_pct", None, restrict_to_person=True)
     lead = med("lead_room_ratio", None, restrict_to_person=True)
-    facing = sum(1 for f in has_person_frames if f.get("facing_camera")) > len(has_person_frames) / 2
-    head_cutoff = sum(1 for f in has_person_frames if f.get("head_cutoff")) > len(has_person_frames) / 2
-
-    avg_motion = (
-        round(statistics.fmean(motion_values), 3) if motion_values else 0.0
+    facing = (
+        sum(1 for f in has_person_frames if f.get("facing_camera")) > len(has_person_frames) / 2
     )
+    head_cutoff = (
+        sum(1 for f in has_person_frames if f.get("head_cutoff")) > len(has_person_frames) / 2
+    )
+
+    avg_motion = round(statistics.fmean(motion_values), 3) if motion_values else 0.0
 
     out = {
         "has_person": has_person,
@@ -247,10 +257,11 @@ def aggregate_clip_frames(frames: list[dict],
         "focus_rating": _majority_str(frames, "focus_rating", "acceptable"),
         "laplacian_variance": round(med("laplacian_variance", 0.0) or 0.0, 2),
         "subject_separation_ratio": round(med("subject_separation_ratio", 1.0) or 1.0, 2),
-        "motion_blur_on_subject": sum(1 for f in frames if f.get("motion_blur_on_subject")) > len(frames) / 2,
-        "stability": "stable" if avg_motion < 5.0 else (
-            "moderate_shake" if avg_motion < 8.0 else "shaky"
-        ),
+        "motion_blur_on_subject": sum(1 for f in frames if f.get("motion_blur_on_subject"))
+        > len(frames) / 2,
+        "stability": "stable"
+        if avg_motion < 5.0
+        else ("moderate_shake" if avg_motion < 8.0 else "shaky"),
         "avg_motion_magnitude": avg_motion,
     }
     return out
@@ -267,25 +278,32 @@ def _majority_str(frames: list[dict], key: str, default: str) -> str:
 # Frame extraction via ffmpeg.
 # ---------------------------------------------------------------------------
 
-def extract_sample_frames(clip_path: Path, samples: int,
-                          out_dir: Path) -> list[Path]:
+
+def extract_sample_frames(clip_path: Path, samples: int, out_dir: Path) -> list[Path]:
     """Sample N evenly-spaced frames. Returns the list of JPEG paths."""
     out_dir.mkdir(parents=True, exist_ok=True)
     duration = _probe_duration(clip_path)
     if duration <= 0:
         return []
-    timestamps = [
-        round(duration * (i + 0.5) / samples, 3) for i in range(samples)
-    ] if samples > 0 else []
+    timestamps = (
+        [round(duration * (i + 0.5) / samples, 3) for i in range(samples)] if samples > 0 else []
+    )
     out_paths = []
     for i, ts in enumerate(timestamps):
         out = out_dir / f"sample_{i:02d}.jpg"
         cmd = [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-ss", f"{ts:.3f}",
-            "-i", str(clip_path),
-            "-vframes", "1",
-            "-q:v", "2",
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{ts:.3f}",
+            "-i",
+            str(clip_path),
+            "-vframes",
+            "1",
+            "-q:v",
+            "2",
             str(out),
         ]
         try:
@@ -293,13 +311,13 @@ def extract_sample_frames(clip_path: Path, samples: int,
             if out.exists():
                 out_paths.append(out)
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
-            logger.warning("frame extraction failed for %s @ %s: %s",
-                           clip_path, ts, e)
+            logger.warning("frame extraction failed for %s @ %s: %s", clip_path, ts, e)
     return out_paths
 
 
-def extract_frames_at_interval(clip_path: Path, interval_sec: float,
-                               out_dir: Path) -> list[tuple[float, Path]]:
+def extract_frames_at_interval(
+    clip_path: Path, interval_sec: float, out_dir: Path
+) -> list[tuple[float, Path]]:
     """Sample frames every `interval_sec`. Returns [(time_sec, path), ...]."""
     out_dir.mkdir(parents=True, exist_ok=True)
     duration = _probe_duration(clip_path)
@@ -314,11 +332,18 @@ def extract_frames_at_interval(clip_path: Path, interval_sec: float,
     for i, ts in enumerate(times):
         path = out_dir / f"interval_{i:04d}.jpg"
         cmd = [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-ss", f"{ts:.3f}",
-            "-i", str(clip_path),
-            "-vframes", "1",
-            "-q:v", "2",
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{ts:.3f}",
+            "-i",
+            str(clip_path),
+            "-vframes",
+            "1",
+            "-q:v",
+            "2",
             str(path),
         ]
         try:
@@ -341,9 +366,8 @@ def _probe_duration(clip_path: Path) -> float:
 # Trim point detection.
 # ---------------------------------------------------------------------------
 
-def detect_trim_points(clip_path: Path,
-                       interval_sec: float = 0.5,
-                       extract_fn=None) -> dict:
+
+def detect_trim_points(clip_path: Path, interval_sec: float = 0.5, extract_fn=None) -> dict:
     """Find the first stable+sharp window from the start and the last
     stable+sharp window from the end. Returns trim_in/trim_out in seconds."""
     extract_fn = extract_fn or extract_frames_at_interval
@@ -365,14 +389,12 @@ def detect_trim_points(clip_path: Path,
                 "usable_duration_sec": duration,
                 "reason": "no_frames_extracted",
             }
-        scores = _score_frame_sequence([p for _, p in sampled],
-                                       [t for t, _ in sampled])
+        scores = _score_frame_sequence([p for _, p in sampled], [t for t, _ in sampled])
 
     return _trim_window_from_scores(scores, duration, interval_sec)
 
 
-def _score_frame_sequence(frame_paths: list[Path],
-                          times: list[float]) -> list[dict]:
+def _score_frame_sequence(frame_paths: list[Path], times: list[float]) -> list[dict]:
     """Score each sampled frame: sharpness + stability vs. previous frame."""
     out = []
     prev_img = None
@@ -388,25 +410,28 @@ def _score_frame_sequence(frame_paths: list[Path],
             motion = 0.0
         else:
             motion = motion_magnitude(prev_img, img)
-        out.append({
-            "time_sec": ts,
-            "sharp": sharpness > 40,
-            "stable": motion < 5.0,
-            "laplacian": round(sharpness, 2),
-            "motion": round(motion, 3),
-        })
+        out.append(
+            {
+                "time_sec": ts,
+                "sharp": sharpness > 40,
+                "stable": motion < 5.0,
+                "laplacian": round(sharpness, 2),
+                "motion": round(motion, 3),
+            }
+        )
         prev_img = img
     return out
 
 
-def _trim_window_from_scores(scores: list[dict], duration: float,
-                             interval_sec: float) -> dict:
+def _trim_window_from_scores(scores: list[dict], duration: float, interval_sec: float) -> dict:
     """Walk forward to first sharp+stable frame, backward to last sharp+stable
     frame. Pure function — exposed so it's directly testable."""
     if not scores:
         return {
-            "trim_in_sec": 0.0, "trim_out_sec": duration,
-            "usable_duration_sec": duration, "reason": "no_scores",
+            "trim_in_sec": 0.0,
+            "trim_out_sec": duration,
+            "usable_duration_sec": duration,
+            "reason": "no_scores",
         }
 
     trim_in = 0.0
@@ -419,8 +444,10 @@ def _trim_window_from_scores(scores: list[dict], duration: float,
     else:
         # Nothing usable. Caller decides whether to reject.
         return {
-            "trim_in_sec": 0.0, "trim_out_sec": 0.0,
-            "usable_duration_sec": 0.0, "reason": "no_stable_frames",
+            "trim_in_sec": 0.0,
+            "trim_out_sec": 0.0,
+            "usable_duration_sec": 0.0,
+            "reason": "no_stable_frames",
         }
 
     trim_out = scores[-1]["time_sec"] + interval_sec
@@ -435,9 +462,7 @@ def _trim_window_from_scores(scores: list[dict], duration: float,
     trim_out = min(trim_out, duration)
     if trim_out < trim_in:
         trim_out = trim_in
-    reason = "shaky_start" if in_trimmed else (
-        "shaky_end" if out_trimmed else "clean"
-    )
+    reason = "shaky_start" if in_trimmed else ("shaky_end" if out_trimmed else "clean")
     return {
         "trim_in_sec": round(trim_in, 3),
         "trim_out_sec": round(trim_out, 3),
@@ -446,10 +471,9 @@ def _trim_window_from_scores(scores: list[dict], duration: float,
     }
 
 
-def speech_trim_from_transcript(transcript: dict | None,
-                                clip_duration: float,
-                                pad_before: float = 0.5,
-                                pad_after: float = 1.0) -> dict | None:
+def speech_trim_from_transcript(
+    transcript: dict | None, clip_duration: float, pad_before: float = 0.5, pad_after: float = 1.0
+) -> dict | None:
     """Compute trim_in / trim_out from WhisperX-style word timings.
     Returns None if there are no usable word timings."""
     if not transcript:
@@ -477,11 +501,14 @@ def speech_trim_from_transcript(transcript: dict | None,
 # Clip path mapping (proxy → camera-original).
 # ---------------------------------------------------------------------------
 
-def map_to_original(proxy_path: Path,
-                    proxy_dir: str = "02-proxies",
-                    original_dir: str = "01-camera-originals",
-                    proxy_suffix: str = "_proxy",
-                    original_ext: str = ".MXF") -> str:
+
+def map_to_original(
+    proxy_path: Path,
+    proxy_dir: str = "02-proxies",
+    original_dir: str = "01-camera-originals",
+    proxy_suffix: str = "_proxy",
+    original_ext: str = ".MXF",
+) -> str:
     """Best-effort mapping of a proxy path back to the camera original."""
     s = str(proxy_path)
     s = s.replace(f"/{proxy_dir}/", f"/{original_dir}/")
@@ -496,15 +523,19 @@ def map_to_original(proxy_path: Path,
 # Top-level: score a directory or single clip.
 # ---------------------------------------------------------------------------
 
-def score_clip(clip_path: Path,
-               shot_profile: dict,
-               samples_per_clip: int = 5,
-               detect_trims_flag: bool = False,
-               scene: str | None = None,
-               transcripts: dict | None = None,
-               analyze_frame_fn=None,
-               analyze_emotion_fn=None,
-               extract_fn=None) -> dict:
+
+def score_clip(
+    clip_path: Path,
+    shot_profile: dict,
+    samples_per_clip: int = 5,
+    detect_trims_flag: bool = False,
+    scene: str | None = None,
+    transcripts: dict | None = None,
+    emotion_scene_weights: dict[str, float] | None = None,
+    analyze_frame_fn=None,
+    analyze_emotion_fn=None,
+    extract_fn=None,
+) -> dict:
     """Score one clip. The injectable functions make this directly testable."""
     analyze_frame_fn = analyze_frame_fn or analyze_frame
     analyze_emotion_fn = analyze_emotion_fn or analyze_emotions
@@ -537,7 +568,12 @@ def score_clip(clip_path: Path,
     aggregated["penalties_applied"] = collect_penalties(
         aggregated, has_person=aggregated.get("has_person", False)
     )
-    score, rejection = compute_clip_score(aggregated, shot_profile, scene=scene)
+    score, rejection = compute_clip_score(
+        aggregated,
+        shot_profile,
+        scene=scene,
+        emotion_scene_weights=emotion_scene_weights,
+    )
 
     record = {
         "file": str(clip_path),
@@ -546,8 +582,9 @@ def score_clip(clip_path: Path,
         "score": score,
         "rejection": rejection,
         "scene": scene,
-        "analysis": {k: v for k, v in aggregated.items()
-                     if k not in ("emotion", "penalties_applied")},
+        "analysis": {
+            k: v for k, v in aggregated.items() if k not in ("emotion", "penalties_applied")
+        },
         "emotion": aggregated["emotion"],
         "penalties_applied": aggregated["penalties_applied"],
     }
@@ -563,14 +600,17 @@ def score_clip(clip_path: Path,
     return record
 
 
-def score_directory(target: Path,
-                    shot_profile: dict,
-                    samples_per_clip: int = 5,
-                    detect_trims_flag: bool = False,
-                    scene_context: dict | None = None,
-                    transcripts: dict | None = None,
-                    progress_cb=None,
-                    score_clip_fn=None) -> dict:
+def score_directory(
+    target: Path,
+    shot_profile: dict,
+    samples_per_clip: int = 5,
+    detect_trims_flag: bool = False,
+    scene_context: dict | None = None,
+    transcripts: dict | None = None,
+    emotion_scene_weights: dict[str, float] | None = None,
+    progress_cb=None,
+    score_clip_fn=None,
+) -> dict:
     """Top-level scorer. `target` may be a single clip or a directory."""
     score_clip_fn = score_clip_fn or score_clip
 
@@ -578,25 +618,40 @@ def score_directory(target: Path,
     if target.is_file():
         clips = [target] if target.suffix.lower() in extensions else []
     else:
-        clips = sorted(p for p in target.rglob("*")
-                       if p.is_file() and p.suffix.lower() in extensions)
+        clips = sorted(
+            p for p in target.rglob("*") if p.is_file() and p.suffix.lower() in extensions
+        )
 
     records = []
     rejected = 0
-    distribution = {f"{lo}-{hi}": 0 for lo, hi in
-                    [(0, 9), (10, 19), (20, 29), (30, 39), (40, 49),
-                     (50, 59), (60, 69), (70, 79), (80, 89), (90, 100)]}
+    distribution = {
+        f"{lo}-{hi}": 0
+        for lo, hi in [
+            (0, 9),
+            (10, 19),
+            (20, 29),
+            (30, 39),
+            (40, 49),
+            (50, 59),
+            (60, 69),
+            (70, 79),
+            (80, 89),
+            (90, 100),
+        ]
+    }
     distribution["rejected"] = 0
 
     for i, c in enumerate(clips):
         scene = (scene_context or {}).get(c.name) or (scene_context or {}).get(str(c))
         try:
             rec = score_clip_fn(
-                c, shot_profile,
+                c,
+                shot_profile,
                 samples_per_clip=samples_per_clip,
                 detect_trims_flag=detect_trims_flag,
                 scene=scene,
                 transcripts=transcripts,
+                emotion_scene_weights=emotion_scene_weights,
             )
         except Exception as e:
             logger.warning("scoring failed for %s: %s", c.name, e)
@@ -607,8 +662,18 @@ def score_directory(target: Path,
             distribution["rejected"] += 1
         else:
             s = rec.get("score", 0)
-            for lo, hi in [(90, 100), (80, 89), (70, 79), (60, 69), (50, 59),
-                           (40, 49), (30, 39), (20, 29), (10, 19), (0, 9)]:
+            for lo, hi in [
+                (90, 100),
+                (80, 89),
+                (70, 79),
+                (60, 69),
+                (50, 59),
+                (40, 49),
+                (30, 39),
+                (20, 29),
+                (10, 19),
+                (0, 9),
+            ]:
                 if lo <= s <= hi:
                     distribution[f"{lo}-{hi}"] += 1
                     break

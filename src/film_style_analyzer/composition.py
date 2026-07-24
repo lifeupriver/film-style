@@ -40,6 +40,7 @@ def _load_mediapipe():
         return _mp_face_detection, _mp_face_mesh, _mp_pose
     try:
         from mediapipe import solutions
+
         _mp_face_detection = solutions.face_detection
         _mp_face_mesh = solutions.face_mesh
         _mp_pose = solutions.pose
@@ -54,9 +55,11 @@ def _load_mediapipe():
 # Data classes
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class FaceInfo:
     """Normalized face detection result. All bounds in [0, 1]."""
+
     bbox_x: float
     bbox_y: float
     bbox_w: float
@@ -72,6 +75,7 @@ class FaceInfo:
 # Face detection (MediaPipe)
 # ---------------------------------------------------------------------------
 
+
 def detect_faces(image: np.ndarray) -> list[FaceInfo]:
     """Run MediaPipe Face Detection. Returns [] if unavailable."""
     fd, _, _ = _load_mediapipe()
@@ -81,7 +85,7 @@ def detect_faces(image: np.ndarray) -> list[FaceInfo]:
     out: list[FaceInfo] = []
     with fd.FaceDetection(model_selection=1, min_detection_confidence=0.5) as det:
         result = det.process(rgb)
-        for d in (result.detections or []):
+        for d in result.detections or []:
             box = d.location_data.relative_bounding_box
             kps = {}
             for kp in d.location_data.relative_keypoints:
@@ -96,14 +100,16 @@ def detect_faces(image: np.ndarray) -> list[FaceInfo]:
                 "right_ear": kps.get(4),
                 "left_ear": kps.get(5),
             }
-            out.append(FaceInfo(
-                bbox_x=max(0.0, box.xmin),
-                bbox_y=max(0.0, box.ymin),
-                bbox_w=box.width,
-                bbox_h=box.height,
-                confidence=float(d.score[0]) if d.score else 1.0,
-                keypoints={k: v for k, v in named.items() if v is not None},
-            ))
+            out.append(
+                FaceInfo(
+                    bbox_x=max(0.0, box.xmin),
+                    bbox_y=max(0.0, box.ymin),
+                    bbox_w=box.width,
+                    bbox_h=box.height,
+                    confidence=float(d.score[0]) if d.score else 1.0,
+                    keypoints={k: v for k, v in named.items() if v is not None},
+                )
+            )
     return out
 
 
@@ -115,8 +121,12 @@ def detect_face_mesh(image: np.ndarray) -> dict | None:
     if fm is None:
         return None
     rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    with fm.FaceMesh(static_image_mode=True, max_num_faces=1,
-                     refine_landmarks=False, min_detection_confidence=0.5) as mesh:
+    with fm.FaceMesh(
+        static_image_mode=True,
+        max_num_faces=1,
+        refine_landmarks=False,
+        min_detection_confidence=0.5,
+    ) as mesh:
         r = mesh.process(rgb)
         if not r.multi_face_landmarks:
             return None
@@ -140,18 +150,21 @@ def detect_pose(image: np.ndarray) -> dict | None:
     if pose_mod is None:
         return None
     rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    with pose_mod.Pose(static_image_mode=True, model_complexity=1,
-                       min_detection_confidence=0.5) as pose:
+    with pose_mod.Pose(
+        static_image_mode=True, model_complexity=1, min_detection_confidence=0.5
+    ) as pose:
         r = pose.process(rgb)
         if not r.pose_landmarks:
             return None
         lm = r.pose_landmarks.landmark
+
         # MediaPipe Pose indices:
         # 0=nose, 11=left_shoulder, 12=right_shoulder,
         # 23=left_hip, 24=right_hip, 25=left_knee, 26=right_knee,
         # 27=left_ankle, 28=right_ankle.
         def pt(i):
             return (lm[i].x, lm[i].y, lm[i].visibility)
+
         return {
             "nose": pt(0),
             "left_shoulder": pt(11),
@@ -169,8 +182,8 @@ def detect_pose(image: np.ndarray) -> dict | None:
 # Framing classification
 # ---------------------------------------------------------------------------
 
-def classify_framing(faces: list[FaceInfo], pose: dict | None,
-                     image_shape: tuple[int, int]) -> str:
+
+def classify_framing(faces: list[FaceInfo], pose: dict | None, image_shape: tuple[int, int]) -> str:
     """Body framing: extreme-close-up, close-up, medium-close, medium,
     medium-full, full, wide, no-person. Uses face size as the primary
     signal, refined by pose visibility for body parts."""
@@ -203,15 +216,16 @@ def classify_framing(faces: list[FaceInfo], pose: dict | None,
     # Refine using pose: if hips and knees are visible, it's at least
     # medium-full; if ankles too, it's full.
     if pose is not None:
+
         def vis(name):
             v = pose.get(name)
             return v is not None and v[2] > 0.5
+
         ankles = vis("left_ankle") or vis("right_ankle")
         knees = vis("left_knee") or vis("right_knee")
         hips = vis("left_hip") or vis("right_hip")
         shoulders = vis("left_shoulder") or vis("right_shoulder")
-        if ankles and base in ("close-up", "medium-close", "medium",
-                                "medium-full", "wide"):
+        if ankles and base in ("close-up", "medium-close", "medium", "medium-full", "wide"):
             base = "full"
         elif knees and base in ("close-up", "medium-close", "medium", "wide"):
             base = "medium-full"
@@ -282,9 +296,10 @@ def facing_camera(faces: list[FaceInfo], face_mesh: dict | None) -> bool:
 # Headroom
 # ---------------------------------------------------------------------------
 
-def compute_headroom_pct(face_mesh: dict | None,
-                         pose: dict | None,
-                         faces: list[FaceInfo]) -> float | None:
+
+def compute_headroom_pct(
+    face_mesh: dict | None, pose: dict | None, faces: list[FaceInfo]
+) -> float | None:
     """Distance from top of head to top of frame, as % of frame height.
     Prefers the Face Mesh forehead landmark; falls back to the face bbox."""
     top_y = None
@@ -306,8 +321,8 @@ def compute_headroom_pct(face_mesh: dict | None,
 # Lead room / looking room
 # ---------------------------------------------------------------------------
 
-def compute_lead_room(face_mesh: dict | None,
-                      faces: list[FaceInfo]) -> dict:
+
+def compute_lead_room(face_mesh: dict | None, faces: list[FaceInfo]) -> dict:
     """Determine which direction the subject is looking and compare the
     space on the looking side vs. behind. Returns:
         {"looking_direction": "left"|"right"|None,
@@ -316,8 +331,12 @@ def compute_lead_room(face_mesh: dict | None,
     """
     nose_x = eye_mid_x = face_x_center = None
 
-    if face_mesh and face_mesh.get("nose_tip") and face_mesh.get("left_eye") \
-            and face_mesh.get("right_eye"):
+    if (
+        face_mesh
+        and face_mesh.get("nose_tip")
+        and face_mesh.get("left_eye")
+        and face_mesh.get("right_eye")
+    ):
         le = face_mesh["left_eye"]
         re = face_mesh["right_eye"]
         nose_x = face_mesh["nose_tip"][0]
@@ -356,8 +375,10 @@ def compute_lead_room(face_mesh: dict | None,
 # ---------------------------------------------------------------------------
 
 THIRDS_INTERSECTIONS = [
-    (1 / 3, 1 / 3), (2 / 3, 1 / 3),
-    (1 / 3, 2 / 3), (2 / 3, 2 / 3),
+    (1 / 3, 1 / 3),
+    (2 / 3, 1 / 3),
+    (1 / 3, 2 / 3),
+    (2 / 3, 2 / 3),
 ]
 
 
@@ -377,9 +398,10 @@ def thirds_score(face_center: tuple[float, float] | None) -> float:
 # Horizon tilt (OpenCV Hough)
 # ---------------------------------------------------------------------------
 
-def detect_horizon_tilt(image: np.ndarray,
-                        vote_threshold: int = 120,
-                        min_line_length_frac: float = 0.25) -> dict:
+
+def detect_horizon_tilt(
+    image: np.ndarray, vote_threshold: int = 120, min_line_length_frac: float = 0.25
+) -> dict:
     """Find the dominant near-horizontal architectural line and return
     its tilt in degrees from level. Returns:
         {"tilt_degrees": float|None,
@@ -392,7 +414,9 @@ def detect_horizon_tilt(image: np.ndarray,
     edges = cv2.Canny(gray, 80, 200, apertureSize=3)
     min_len = int(w * min_line_length_frac)
     lines = cv2.HoughLinesP(
-        edges, 1, np.pi / 720,
+        edges,
+        1,
+        np.pi / 720,
         threshold=vote_threshold,
         minLineLength=min_len,
         maxLineGap=10,
@@ -426,6 +450,7 @@ def detect_horizon_tilt(image: np.ndarray,
 # ---------------------------------------------------------------------------
 # Exposure (OpenCV histogram)
 # ---------------------------------------------------------------------------
+
 
 def analyze_exposure(image: np.ndarray) -> dict:
     """Mean brightness, shadow/midtone/highlight pcts, clipping, rating."""
@@ -467,9 +492,8 @@ def analyze_exposure(image: np.ndarray) -> dict:
 # Backlit subject detection
 # ---------------------------------------------------------------------------
 
-def detect_backlit(image: np.ndarray,
-                   faces: list[FaceInfo],
-                   threshold: float = 0.40) -> bool:
+
+def detect_backlit(image: np.ndarray, faces: list[FaceInfo], threshold: float = 0.40) -> bool:
     """True when the face region is significantly darker than the surrounding
     background. `threshold` is the fractional drop in mean brightness;
     0.40 means face is 40%+ darker than the rest of the frame."""
@@ -531,6 +555,7 @@ def rate_sharpness(variance: float) -> str:
 # Subject separation / depth of field
 # ---------------------------------------------------------------------------
 
+
 def compute_subject_separation(image: np.ndarray) -> float:
     """Ratio of center-region sharpness to edge sharpness. Higher = more
     bokeh / shallower DOF. The center is the inner 40% of the frame; edges
@@ -541,13 +566,13 @@ def compute_subject_separation(image: np.ndarray) -> float:
     cy0, cy1 = int(h * 0.30), int(h * 0.70)
     center = gray[cy0:cy1, cx0:cx1]
     left_edge = gray[:, : int(w * 0.30)]
-    right_edge = gray[:, int(w * 0.70):]
+    right_edge = gray[:, int(w * 0.70) :]
     if center.size == 0:
         return 1.0
     center_var = float(cv2.Laplacian(center, cv2.CV_64F).var())
     edge_var = float(
-        (cv2.Laplacian(left_edge, cv2.CV_64F).var()
-         + cv2.Laplacian(right_edge, cv2.CV_64F).var()) / 2
+        (cv2.Laplacian(left_edge, cv2.CV_64F).var() + cv2.Laplacian(right_edge, cv2.CV_64F).var())
+        / 2
     )
     if edge_var < 1e-3:
         return 99.0
@@ -558,9 +583,10 @@ def compute_subject_separation(image: np.ndarray) -> float:
 # Motion blur on subject
 # ---------------------------------------------------------------------------
 
-def detect_motion_blur_subject(image: np.ndarray,
-                               faces: list[FaceInfo],
-                               soft_factor: float = 0.5) -> bool:
+
+def detect_motion_blur_subject(
+    image: np.ndarray, faces: list[FaceInfo], soft_factor: float = 0.5
+) -> bool:
     """True if the face region is much softer than the background. Indicates
     the subject moved during exposure even though the camera was steady."""
     if not faces:
@@ -595,8 +621,8 @@ def detect_motion_blur_subject(image: np.ndarray,
 # Camera stability (optical flow between consecutive frames)
 # ---------------------------------------------------------------------------
 
-def motion_magnitude(prev_frame: np.ndarray | None,
-                     curr_frame: np.ndarray) -> float:
+
+def motion_magnitude(prev_frame: np.ndarray | None, curr_frame: np.ndarray) -> float:
     """Average pixel motion between consecutive frames via Farneback
     optical flow. 0 if no previous frame given."""
     if prev_frame is None:
@@ -606,7 +632,16 @@ def motion_magnitude(prev_frame: np.ndarray | None,
     if g_prev.shape != g_curr.shape:
         g_prev = cv2.resize(g_prev, (g_curr.shape[1], g_curr.shape[0]))
     flow = cv2.calcOpticalFlowFarneback(
-        g_prev, g_curr, None, 0.5, 3, 15, 3, 5, 1.2, 0,
+        g_prev,
+        g_curr,
+        None,
+        0.5,
+        3,
+        15,
+        3,
+        5,
+        1.2,
+        0,
     )
     mag = np.sqrt(flow[..., 0] ** 2 + flow[..., 1] ** 2)
     return round(float(mag.mean()), 3)
@@ -615,6 +650,7 @@ def motion_magnitude(prev_frame: np.ndarray | None,
 # ---------------------------------------------------------------------------
 # Top-level: analyze a single frame
 # ---------------------------------------------------------------------------
+
 
 def analyze_frame(frame: np.ndarray | Path | str) -> dict:
     """Run every composition detector on a single frame. Accepts either a
@@ -640,8 +676,11 @@ def analyze_frame(frame: np.ndarray | Path | str) -> dict:
     facing = facing_camera(faces, mesh) if has_person else False
     cutoff = head_cut_off(faces, mesh) if has_person else False
     headroom = compute_headroom_pct(mesh, pose, faces) if has_person else None
-    lead = compute_lead_room(mesh, faces) if has_person else \
-        {"looking_direction": None, "lead_room_ratio": None}
+    lead = (
+        compute_lead_room(mesh, faces)
+        if has_person
+        else {"looking_direction": None, "lead_room_ratio": None}
+    )
     thirds = thirds_score(face_center) if face_center else 0.0
 
     horizon = detect_horizon_tilt(image)

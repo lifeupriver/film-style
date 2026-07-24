@@ -5,8 +5,14 @@ from film_style_analyzer.shot_size import SHOT_LABELS, summarize_shot_mix
 
 
 def _clip(i, size=None):
-    c = Clip(index=i, start_sec=i, end_sec=i + 1, duration_sec=1.0,
-             transition_in="hard_cut", transition_out="hard_cut")
+    c = Clip(
+        index=i,
+        start_sec=i,
+        end_sec=i + 1,
+        duration_sec=1.0,
+        transition_in="hard_cut",
+        transition_out="hard_cut",
+    )
     c.shot_size = size
     return c
 
@@ -16,8 +22,7 @@ def test_summarize_empty():
 
 
 def test_summarize_distribution_and_dominant():
-    clips = [_clip(0, "wide"), _clip(1, "wide"), _clip(2, "close_up"),
-             _clip(3, None)]
+    clips = [_clip(0, "wide"), _clip(1, "wide"), _clip(2, "close_up"), _clip(3, None)]
     s = summarize_shot_mix(clips)
     assert s["labeled_clips"] == 3
     assert s["dominant"] == "wide"

@@ -16,6 +16,7 @@ def _select_device() -> tuple[str, str]:
     supports CUDA + CPU — MPS is not supported, so Apple Silicon falls back to CPU."""
     try:
         import torch
+
         if torch.cuda.is_available():
             return "cuda", "float16"
     except Exception:
@@ -42,7 +43,9 @@ def transcribe(
     device, compute_type = _select_device()
 
     try:
-        model = whisperx.load_model(model_name, device, compute_type=compute_type, language=language)
+        model = whisperx.load_model(
+            model_name, device, compute_type=compute_type, language=language
+        )
         audio = whisperx.load_audio(str(wav_path))
         result: dict[str, Any] = model.transcribe(audio, batch_size=batch_size, language=language)
 
@@ -50,7 +53,11 @@ def transcribe(
         try:
             align_model, metadata = whisperx.load_align_model(language_code=language, device=device)
             result = whisperx.align(
-                result["segments"], align_model, metadata, audio, device,
+                result["segments"],
+                align_model,
+                metadata,
+                audio,
+                device,
                 return_char_alignments=False,
             )
         except Exception:
@@ -62,13 +69,14 @@ def transcribe(
         if diarize and os.environ.get("HF_TOKEN"):
             try:
                 diarize_model = whisperx.DiarizationPipeline(
-                    use_auth_token=os.environ["HF_TOKEN"], device=device,
+                    use_auth_token=os.environ["HF_TOKEN"],
+                    device=device,
                 )
                 diarize_segments = diarize_model(audio)
                 result = whisperx.assign_word_speakers(diarize_segments, result)
-                speakers_detected = len({
-                    s.get("speaker") for s in result.get("segments", []) if s.get("speaker")
-                })
+                speakers_detected = len(
+                    {s.get("speaker") for s in result.get("segments", []) if s.get("speaker")}
+                )
             except Exception:
                 pass
     except Exception as e:
@@ -86,13 +94,15 @@ def transcribe(
         ]
         total_words += len(s.get("text", "").split())
         longest = max(longest, seg_end - seg_start)
-        segments.append({
-            "start_sec": seg_start,
-            "end_sec": seg_end,
-            "text": s.get("text", "").strip(),
-            "speaker": s.get("speaker"),
-            "words": words,
-        })
+        segments.append(
+            {
+                "start_sec": seg_start,
+                "end_sec": seg_end,
+                "text": s.get("text", "").strip(),
+                "speaker": s.get("speaker"),
+                "words": words,
+            }
+        )
 
     return {
         "segments": segments,

@@ -3,7 +3,6 @@ corpus_report) — pure-function tests with mocks for the heavy parts."""
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -13,7 +12,9 @@ import pytest
 def fixture_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     import importlib
+
     from film_style_analyzer import mcp_server
+
     importlib.reload(mcp_server)
     mcp_server.ANALYSES_DIR.mkdir(parents=True, exist_ok=True)
     return tmp_path, mcp_server
@@ -24,33 +25,77 @@ def _write_synthetic_analysis(mcp_server, stem):
         "version": "1.0",
         "analyzed_at": datetime.now(timezone.utc).isoformat(),
         "analyzer_version": "test",
-        "film": {"filename": f"{stem}.mp4", "path": f"/tmp/{stem}.mp4",
-                 "duration_sec": 120.0, "resolution": "1920x1080",
-                 "frame_rate": 24.0, "codec": "h264"},
-        "cuts": {"total": 2, "timestamps_sec": [0.0, 5.0],
-                 "clips": [
-                     {"index": 0, "start_sec": 0.0, "end_sec": 5.0, "duration_sec": 5.0,
-                      "transition_in": "fade_in", "transition_out": "hard_cut"},
-                     {"index": 1, "start_sec": 5.0, "end_sec": 120.0,
-                      "duration_sec": 115.0, "transition_in": "hard_cut",
-                      "transition_out": "fade_out"},
-                 ]},
-        "pacing": {"avg_clip_duration_sec": 60.0, "median_clip_duration_sec": 60.0,
-                   "std_dev_sec": 55.0, "min_clip_sec": 5.0, "max_clip_sec": 115.0,
-                   "clip_duration_histogram": {}, "pacing_curve_by_quartile": {},
-                   "pacing_curve_by_decile": [60.0] * 10},
-        "transitions": {"hard_cut": 1, "dissolve": 0, "fade_in": 1, "fade_out": 1,
-                        "dissolve_positions_pct": [],
-                        "avg_dissolve_duration_sec": 0.0},
-        "chapters": [{"index": 0, "start_clip": 0, "end_clip": 1,
-                      "start_sec": 0, "end_sec": 120, "duration_sec": 120,
-                      "clip_count": 2, "avg_clip_sec": 60,
-                      "representative_thumbnail": None, "label": None}],
-        "structure": {"opening": {"first_cut_at_sec": 5.0,
-                                   "first_5_clips_avg_duration_sec": 60},
-                      "closing": {"last_cut_at_sec": 120,
-                                   "last_5_clips_avg_duration_sec": 60,
-                                   "fade_to_black": True, "fade_duration_sec": 2.0}},
+        "film": {
+            "filename": f"{stem}.mp4",
+            "path": f"/tmp/{stem}.mp4",
+            "duration_sec": 120.0,
+            "resolution": "1920x1080",
+            "frame_rate": 24.0,
+            "codec": "h264",
+        },
+        "cuts": {
+            "total": 2,
+            "timestamps_sec": [0.0, 5.0],
+            "clips": [
+                {
+                    "index": 0,
+                    "start_sec": 0.0,
+                    "end_sec": 5.0,
+                    "duration_sec": 5.0,
+                    "transition_in": "fade_in",
+                    "transition_out": "hard_cut",
+                },
+                {
+                    "index": 1,
+                    "start_sec": 5.0,
+                    "end_sec": 120.0,
+                    "duration_sec": 115.0,
+                    "transition_in": "hard_cut",
+                    "transition_out": "fade_out",
+                },
+            ],
+        },
+        "pacing": {
+            "avg_clip_duration_sec": 60.0,
+            "median_clip_duration_sec": 60.0,
+            "std_dev_sec": 55.0,
+            "min_clip_sec": 5.0,
+            "max_clip_sec": 115.0,
+            "clip_duration_histogram": {},
+            "pacing_curve_by_quartile": {},
+            "pacing_curve_by_decile": [60.0] * 10,
+        },
+        "transitions": {
+            "hard_cut": 1,
+            "dissolve": 0,
+            "fade_in": 1,
+            "fade_out": 1,
+            "dissolve_positions_pct": [],
+            "avg_dissolve_duration_sec": 0.0,
+        },
+        "chapters": [
+            {
+                "index": 0,
+                "start_clip": 0,
+                "end_clip": 1,
+                "start_sec": 0,
+                "end_sec": 120,
+                "duration_sec": 120,
+                "clip_count": 2,
+                "avg_clip_sec": 60,
+                "representative_thumbnail": None,
+                "label": None,
+            }
+        ],
+        "structure": {
+            "opening": {"first_cut_at_sec": 5.0, "first_5_clips_avg_duration_sec": 60},
+            "closing": {
+                "last_cut_at_sec": 120,
+                "last_5_clips_avg_duration_sec": 60,
+                "fade_to_black": True,
+                "fade_duration_sec": 2.0,
+            },
+        },
         "metadata": {},
     }
     (mcp_server.ANALYSES_DIR / f"{stem}.json").write_text(json.dumps(payload))
@@ -125,6 +170,7 @@ def test_analyze_films_skips_existing(fixture_home, tmp_path):
 
     # Patch analyze_film so this test never actually runs scene detection.
     from film_style_analyzer import analyzer as analyzer_mod
+
     with patch.object(analyzer_mod, "analyze_film") as mock_run:
         out = mcp_server.tool_analyze_films([str(folder)])
         # Should not have called the heavy pipeline because analysis exists.
@@ -140,8 +186,8 @@ def test_analyze_films_returns_failure_when_underlying_raises(fixture_home, tmp_
     (folder / "demo.mp4").touch()
 
     from film_style_analyzer import analyzer as analyzer_mod
-    with patch.object(analyzer_mod, "analyze_film",
-                       side_effect=RuntimeError("ffprobe failed")):
+
+    with patch.object(analyzer_mod, "analyze_film", side_effect=RuntimeError("ffprobe failed")):
         out = mcp_server.tool_analyze_films([str(folder)])
     assert out["failed"] == 1
     assert "ffprobe failed" in out["results"][0]["error"]
@@ -159,6 +205,7 @@ def test_generate_guide_writes_profile(fixture_home):
 
     # Stub out the Claude API call for the markdown guide.
     from film_style_analyzer import guide_writer as gw
+
     with patch.object(gw, "write_guide", return_value="# Test guide\n\nBody."):
         out = mcp_server.tool_generate_guide()
 
@@ -175,6 +222,7 @@ def test_generate_guide_handles_guide_writer_failure(fixture_home):
     _write_synthetic_analysis(mcp_server, "a")
 
     from film_style_analyzer import guide_writer as gw
+
     with patch.object(gw, "write_guide", side_effect=RuntimeError("api down")):
         out = mcp_server.tool_generate_guide()
 
