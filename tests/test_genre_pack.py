@@ -73,10 +73,31 @@ def test_scene_and_shot_labels_have_minimal_overlap():
     assert overlap <= {"other"}, f"unexpected scene/shot overlap: {overlap - {'other'}}"
 
 
-@pytest.mark.parametrize("name", [
-    "wedding", "commercial", "brand_content",
-    "social_short", "music_video", "documentary",
-])
+def test_wedding_emotion_scene_weights():
+    pack = genre_pack.load("wedding")
+    assert pack.emotion_scene_weights["ceremony"] == 1.5
+    assert pack.emotion_scene_weights["b_roll"] == 0.0
+
+
+def test_commercial_emotion_scene_weights_differ():
+    wedding = genre_pack.load("wedding")
+    commercial = genre_pack.load("commercial")
+    assert commercial.emotion_scene_weights.get("hook", 1.0) == 1.0
+    assert "ceremony" not in commercial.emotion_scene_weights
+    assert wedding.emotion_scene_weights["ceremony"] == 1.5
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "wedding",
+        "commercial",
+        "brand_content",
+        "social_short",
+        "music_video",
+        "documentary",
+    ],
+)
 def test_all_shipped_packs_load(name):
     pack = genre_pack.load(name)
     assert pack.name == name
@@ -84,15 +105,21 @@ def test_all_shipped_packs_load(name):
     assert pack.scene_labels
     assert pack.shot_labels
     assert pack.audio_emphasis in {
-        "music_first", "voiceover_first", "beat_locked",
-        "interview", "hook_driven",
+        "music_first",
+        "voiceover_first",
+        "beat_locked",
+        "interview",
+        "hook_driven",
     }
     assert len(pack.scene_labels) == len(set(pack.scene_labels))
     assert len(pack.shot_labels) == len(set(pack.shot_labels))
     for key in (
-        "guide_writer_system", "chapter_classify_system",
-        "shot_classify_system", "gemini_film_prompt",
-        "gemini_youtube_prompt", "mcp_edit_in_style",
+        "guide_writer_system",
+        "chapter_classify_system",
+        "shot_classify_system",
+        "gemini_film_prompt",
+        "gemini_youtube_prompt",
+        "mcp_edit_in_style",
         "notebooklm_brief_intro",
     ):
         assert key in pack.prompts

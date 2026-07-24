@@ -17,9 +17,14 @@ def pytest_addoption(parser):
 
 
 def pytest_configure(config):
-    config.addinivalue_line(
-        "markers", "needs_real_media: requires --real-media path to run"
-    )
+    config.addinivalue_line("markers", "needs_real_media: requires --real-media path to run")
+
+
+@pytest.fixture(autouse=True)
+def isolated_home(monkeypatch, tmp_path_factory):
+    """Keep tests from reading/writing the developer's real ~/.film-style-analyzer."""
+    home = tmp_path_factory.mktemp("isolated-home")
+    monkeypatch.setenv("HOME", str(home))
 
 
 @pytest.fixture

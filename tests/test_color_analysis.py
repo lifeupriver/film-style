@@ -1,6 +1,7 @@
 """Color analysis: pure-function tests using synthetic frames."""
 
 import importlib
+
 import pytest
 
 cv2 = pytest.importorskip("cv2")
@@ -49,15 +50,21 @@ def test_tone_label_low_key_warm_desaturated():
 
 
 def test_aggregate_palette_combines_weights():
-    a = color.ClipColor(palette=[{"hex": "#aa0000", "weight": 0.6},
-                                  {"hex": "#0000aa", "weight": 0.4}],
-                        mean_luminance=120, luminance_std=30,
-                        warm_cool=0.2, saturation=80)
-    b = color.ClipColor(palette=[{"hex": "#aa0000", "weight": 0.5},
-                                  {"hex": "#00aa00", "weight": 0.5}],
-                        mean_luminance=120, luminance_std=30,
-                        warm_cool=0.2, saturation=80)
+    a = color.ClipColor(
+        palette=[{"hex": "#aa0000", "weight": 0.6}, {"hex": "#0000aa", "weight": 0.4}],
+        mean_luminance=120,
+        luminance_std=30,
+        warm_cool=0.2,
+        saturation=80,
+    )
+    b = color.ClipColor(
+        palette=[{"hex": "#aa0000", "weight": 0.5}, {"hex": "#00aa00", "weight": 0.5}],
+        mean_luminance=120,
+        luminance_std=30,
+        warm_cool=0.2,
+        saturation=80,
+    )
     out = color._aggregate_palette([a, b], top=3)
-    assert out[0]["hex"] == "#aa0000"   # appears in both
+    assert out[0]["hex"] == "#aa0000"  # appears in both
     # Weights should sum to 1.0 after normalization.
     assert abs(sum(p["weight"] for p in out) - 1.0) < 1e-6

@@ -1,7 +1,6 @@
-"""Emotion detection via DeepFace, with wedding-specific scoring.
+"""Emotion detection via DeepFace, with genre-pack-driven scoring.
 
-Per-frame: returns the dominant emotion plus a wedding score that boosts
-happy, surprise, and sad (happy tears) and penalizes angry/fear/disgust.
+Per-frame: returns the dominant emotion plus a genre-weighted score.
 A multi-face bonus rewards crowd reactions.
 
 Per-clip: aggregates frame results using PEAK rather than mean — one
@@ -12,47 +11,21 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from .genre_pack import GenrePack
 
-# Wedding scoring weights. Happy is the obvious primary, surprise picks
-# up first-look reactions, and a measured sad-positive captures happy tears.
-EMOTION_WEIGHTS = {
-    "happy": 1.0,
-    "surprise": 0.6,
-    "sad": 0.4,
-    "neutral": 0.0,
-    "angry": -0.5,
-    "fear": -0.3,
-    "disgust": -0.5,
-}
+# Backward-compatible module-level defaults (wedding).
+from .genre_pack import DEFAULT_EMOTION_WEIGHTS, DEFAULT_WEDDING_SCENE_WEIGHTS
 
+EMOTION_WEIGHTS = DEFAULT_EMOTION_WEIGHTS
+EMOTION_SCENE_WEIGHT = DEFAULT_WEDDING_SCENE_WEIGHTS
 
-# Multi-face bonus: each additional emotional face adds 5 points, capped.
 MULTI_FACE_BONUS_PER_FACE = 5
 MULTI_FACE_BONUS_MAX = 15
-
-
-# Scene-aware emotion weighting consumed by clip_scoring. Wedding scenes
-# where emotion is the whole point get >1.0; details / B-roll get 0.0
-# because emotion shouldn't influence whether a sunset is keeper-worthy.
-EMOTION_SCENE_WEIGHT = {
-    "first_look": 1.5,
-    "ceremony": 1.5,
-    "speeches": 1.5,
-    "parent_dances": 1.3,
-    "first_dance": 1.2,
-    "dancing": 1.0,
-    "couple_photos": 1.0,
-    "getting_ready_bride": 0.8,
-    "getting_ready_groom": 0.8,
-    "cocktail_hour": 0.7,
-    "family_photos": 0.8,
-    "reception_details": 0.0,
-    "b_roll": 0.0,
-    "exit": 1.0,
-}
 
 
 def _empty_result() -> dict:
@@ -62,14 +35,19 @@ def _empty_result() -> dict:
         "emotional_intensity": 0.0,
         "multi_face_bonus": 0,
         "dominant_emotion": "none",
+        "emotion_score": 0.0,
         "wedding_emotion_score": 0.0,
     }
 
 
-def analyze_emotions(frame_path: str | Path) -> dict:
-    """Run DeepFace emotion analysis on a frame. Returns a wedding-scored
-    summary. Returns the empty result on any DeepFace failure (no face
-    found, missing model, OOM, etc.)."""
+def _emotion_weights(pack: "GenrePack | None") -> dict[str, float]:
+    if pack is not None:
+        return pack.emotion_weights
+    return EMOTION_WEIGHTS
+
+
+def analyze_emotions(frame_path: str | Path, pack: "GenrePack | None" = None) -> dict:
+    """Run DeepFace emotion analysis on a frame. Returns a genre-scored summary."""
     try:
         from deepface import DeepFace
     except ImportError:
@@ -87,41 +65,42 @@ def analyze_emotions(frame_path: str | Path) -> dict:
         logger.debug("DeepFace.analyze failed for %s: %s", frame_path, e)
         return _empty_result()
 
-    return _score_emotion_payload(results)
+    return _score_emotion_payload(results, weights=_emotion_weights(pack))
 
 
-def _score_emotion_payload(results) -> dict:
-    """Convert a DeepFace result (single dict or list of dicts) into the
-    wedding-scored summary. Pure function — kept separate from analyze_emotions
-    so tests can stub the DeepFace return value."""
+def _score_emotion_payload(results, *, weights: dict[str, float] | None = None) -> dict:
+    """Convert a DeepFace result into a genre-scored summary."""
+    weights = weights or EMOTION_WEIGHTS
     if not isinstance(results, list):
         results = [results] if results else []
 
     faces: list[dict] = []
     for face in results:
         emo = face.get("emotion", {}) or {}
-        faces.append({
-            "dominant_emotion": face.get("dominant_emotion", "neutral"),
-            "happy": round(float(emo.get("happy", 0)), 1),
-            "surprise": round(float(emo.get("surprise", 0)), 1),
-            "sad": round(float(emo.get("sad", 0)), 1),
-            "neutral": round(float(emo.get("neutral", 0)), 1),
-            "angry": round(float(emo.get("angry", 0)), 1),
-            "fear": round(float(emo.get("fear", 0)), 1),
-            "disgust": round(float(emo.get("disgust", 0)), 1),
-        })
+        faces.append(
+            {
+                "dominant_emotion": face.get("dominant_emotion", "neutral"),
+                "happy": round(float(emo.get("happy", 0)), 1),
+                "surprise": round(float(emo.get("surprise", 0)), 1),
+                "sad": round(float(emo.get("sad", 0)), 1),
+                "neutral": round(float(emo.get("neutral", 0)), 1),
+                "angry": round(float(emo.get("angry", 0)), 1),
+                "fear": round(float(emo.get("fear", 0)), 1),
+                "disgust": round(float(emo.get("disgust", 0)), 1),
+            }
+        )
 
     if not faces:
         return _empty_result()
 
-    wedding_scores: list[float] = []
+    emotion_scores: list[float] = []
     for f in faces:
-        s = sum(f[k] * w for k, w in EMOTION_WEIGHTS.items())
-        wedding_scores.append(max(0.0, s))
+        s = sum(f[k] * weights.get(k, 0.0) for k in f if k != "dominant_emotion")
+        emotion_scores.append(max(0.0, s))
 
-    avg_score = sum(wedding_scores) / len(wedding_scores) if wedding_scores else 0.0
-    if len(wedding_scores) > 1:
-        bonus = min(len(wedding_scores) - 1, 3) * MULTI_FACE_BONUS_PER_FACE
+    avg_score = sum(emotion_scores) / len(emotion_scores) if emotion_scores else 0.0
+    if len(emotion_scores) > 1:
+        bonus = min(len(emotion_scores) - 1, 3) * MULTI_FACE_BONUS_PER_FACE
     else:
         bonus = 0
 
@@ -130,36 +109,52 @@ def _score_emotion_payload(results) -> dict:
         counts[f["dominant_emotion"]] = counts.get(f["dominant_emotion"], 0) + 1
     dominant = max(counts, key=counts.get) if counts else "none"
 
+    total = round(avg_score + bonus, 1)
     return {
         "faces_analyzed": len(faces),
         "emotions": faces,
         "emotional_intensity": round(avg_score, 1),
         "multi_face_bonus": bonus,
         "dominant_emotion": dominant,
-        "wedding_emotion_score": round(avg_score + bonus, 1),
+        "emotion_score": total,
+        "wedding_emotion_score": total,
     }
 
 
 def aggregate_clip_emotions(frame_emotions: list[dict]) -> dict:
-    """Across a clip's sampled frames, take PEAK emotion (not average).
-    A single genuine moment makes a clip worth including."""
+    """Across a clip's sampled frames, take PEAK emotion (not average)."""
     if not frame_emotions:
-        return {
-            "peak_wedding_emotion": 0.0,
+        empty = {
+            "peak_emotion_score": 0.0,
             "peak_emotion_type": "none",
-            "avg_wedding_emotion": 0.0,
+            "avg_emotion_score": 0.0,
             "emotional_frames_pct": 0.0,
+            "peak_wedding_emotion": 0.0,
+            "avg_wedding_emotion": 0.0,
         }
+        return empty
 
-    scores = [float(f.get("wedding_emotion_score", 0)) for f in frame_emotions]
+    scores = [
+        float(f.get("emotion_score", f.get("wedding_emotion_score", 0))) for f in frame_emotions
+    ]
     peak_idx = scores.index(max(scores))
     peak_frame = frame_emotions[peak_idx]
-    emotional_pct = (
-        len([s for s in scores if s > 20]) / len(scores) * 100
-    )
+    emotional_pct = len([s for s in scores if s > 20]) / len(scores) * 100
+    peak = round(max(scores), 1)
+    avg = round(sum(scores) / len(scores), 1)
     return {
-        "peak_wedding_emotion": round(max(scores), 1),
+        "peak_emotion_score": peak,
         "peak_emotion_type": peak_frame.get("dominant_emotion", "none"),
-        "avg_wedding_emotion": round(sum(scores) / len(scores), 1),
+        "avg_emotion_score": avg,
         "emotional_frames_pct": round(emotional_pct, 1),
+        "peak_wedding_emotion": peak,
+        "avg_wedding_emotion": avg,
     }
+
+
+def scene_emotion_weight(scene: str | None, pack: "GenrePack | None") -> float:
+    if not scene:
+        return 1.0
+    if pack is not None:
+        return pack.emotion_scene_weights.get(scene, 1.0)
+    return EMOTION_SCENE_WEIGHT.get(scene, 1.0)

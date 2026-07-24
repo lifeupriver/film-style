@@ -15,11 +15,18 @@ def extract(film_path: Path, clips: list[Clip], out_dir: Path, quality: int = 2)
         # Seek slightly into the clip to avoid pre-cut frames.
         ts = clip.start_sec + min(0.1, clip.duration_sec / 2)
         cmd = [
-            "ffmpeg", "-y", "-loglevel", "error",
-            "-ss", f"{ts:.3f}",
-            "-i", str(film_path),
-            "-vframes", "1",
-            "-q:v", str(quality),
+            "ffmpeg",
+            "-y",
+            "-loglevel",
+            "error",
+            "-ss",
+            f"{ts:.3f}",
+            "-i",
+            str(film_path),
+            "-vframes",
+            "1",
+            "-q:v",
+            str(quality),
             str(out),
         ]
         try:

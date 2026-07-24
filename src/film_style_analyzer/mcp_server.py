@@ -21,27 +21,21 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-DATA_ROOT = Path.home() / ".film-style-analyzer"
+if TYPE_CHECKING:
+    from .schemas import FilmAnalysis
 
+from .paths import data_root, legacy_layout_present, paths_for_genre
 
-def _active_genre_at_import() -> str:
-    """Read the active genre from config at module load. Falls back to 'wedding'."""
-    try:
-        from .config import load as _load
-        return getattr(_load(), "default_genre", "wedding")
-    except Exception:
-        return "wedding"
-
-
-_GENRE_ROOT = DATA_ROOT / _active_genre_at_import()
-ANALYSES_DIR = _GENRE_ROOT / "analyses"
-THUMBS_DIR = _GENRE_ROOT / "thumbs"
-AUDIO_DIR = _GENRE_ROOT / "audio"
-PROFILE_PATH = _GENRE_ROOT / "style-profile.json"
-GUIDE_PATH = _GENRE_ROOT / "style-guide.md"
-STATS_PATH = _GENRE_ROOT / "aggregate-stats.json"
+_gp = paths_for_genre()
+_GENRE_ROOT = _gp.root
+ANALYSES_DIR = _gp.analyses_dir
+THUMBS_DIR = _gp.thumbs_dir
+AUDIO_DIR = _gp.audio_dir
+PROFILE_PATH = _gp.profile_path
+GUIDE_PATH = _gp.guide_path
+STATS_PATH = _gp.stats_path
 
 SUPPORTED_VIDEO = {".mp4", ".mov", ".m4v", ".mkv"}
 
@@ -54,9 +48,11 @@ class MCPServerError(RuntimeError):
 # Pure helpers — testable without an MCP runtime.
 # ---------------------------------------------------------------------------
 
+
 def _safe_stem(stem: str) -> str:
     """Reject anything that could traverse out of ANALYSES_DIR."""
     import re
+
     if not re.match(r"^[A-Za-z0-9._\-]+$", stem):
         raise MCPServerError(f"invalid film stem: {stem!r}")
     return stem
@@ -64,6 +60,7 @@ def _safe_stem(stem: str) -> str:
 
 def _load_film(stem: str) -> "FilmAnalysis":
     from .schemas import FilmAnalysis
+
     path = ANALYSES_DIR / f"{_safe_stem(stem)}.json"
     if not path.is_file():
         raise MCPServerError(f"no analysis at {path}")
@@ -72,6 +69,7 @@ def _load_film(stem: str) -> "FilmAnalysis":
 
 def _load_all_films() -> list["FilmAnalysis"]:
     from .schemas import FilmAnalysis
+
     if not ANALYSES_DIR.exists():
         return []
     out: list[FilmAnalysis] = []
@@ -85,6 +83,7 @@ def _load_all_films() -> list["FilmAnalysis"]:
 
 def _film_summary(a) -> dict[str, Any]:
     from pathlib import Path as _Path
+
     return {
         "stem": _Path(a.film.filename).stem,
         "filename": a.film.filename,
@@ -102,6 +101,7 @@ def _film_summary(a) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Tool implementations — pure functions returning dicts/strings.
 # ---------------------------------------------------------------------------
+
 
 def tool_list_films() -> dict[str, Any]:
     """Return summaries of every analyzed film in the archive."""
@@ -124,9 +124,7 @@ def tool_get_style_profile() -> dict[str, Any]:
     editing in this filmmaker's style. Contains pacing, transitions, audio,
     color, shot mix, music, scene rules, plus a human-readable rules array."""
     if not PROFILE_PATH.is_file():
-        raise MCPServerError(
-            f"{PROFILE_PATH} does not exist. Run `film-style guide` first."
-        )
+        raise MCPServerError(f"{PROFILE_PATH} does not exist. Run `film-style guide` first.")
     return json.loads(PROFILE_PATH.read_text())
 
 
@@ -134,15 +132,14 @@ def tool_get_style_guide() -> str:
     """Return the markdown style guide. Pair with get_style_profile() for
     full coverage — the guide is for reading, the profile is for parsing."""
     if not GUIDE_PATH.is_file():
-        raise MCPServerError(
-            f"{GUIDE_PATH} does not exist. Run `film-style guide` first."
-        )
+        raise MCPServerError(f"{GUIDE_PATH} does not exist. Run `film-style guide` first.")
     return GUIDE_PATH.read_text()
 
 
 def tool_get_aggregate_stats() -> dict[str, Any]:
     """Return aggregate statistics across all analyzed films."""
     from .aggregator import aggregate
+
     return aggregate(_load_all_films())
 
 
@@ -151,6 +148,7 @@ def tool_find_similar_films(stem: str, top: int = 3) -> dict[str, Any]:
     Useful when assembling a new wedding edit — load the most similar prior
     work as a tighter reference than the corpus average."""
     from .matchmaker import biggest_differences, find_similar
+
     target = _load_film(stem)
     archive = _load_all_films()
     matches = find_similar(target, archive, top_n=max(1, min(20, top)))
@@ -170,6 +168,7 @@ def tool_set_film_metadata(stem: str, metadata: dict[str, str | None]) -> dict[s
       weather, duration_target.
     """
     from .metadata import merge as merge_md
+
     a = _load_film(stem)
     a.metadata = merge_md(a.metadata, metadata)
     target_path = ANALYSES_DIR / f"{_safe_stem(stem)}.json"
@@ -181,6 +180,7 @@ def _active_pack():
     """Resolve the active genre pack for label validation."""
     from .config import load as _load_cfg
     from .genre_pack import load as _load_pack
+
     return _load_pack(getattr(_load_cfg(), "default_genre", "wedding"))
 
 
@@ -200,7 +200,7 @@ def tool_get_unlabeled_chapter_thumbnails(stem: str, max_chapters: int = 12) -> 
                 "start_sec": c.start_sec,
                 "end_sec": c.end_sec,
                 "duration_sec": c.duration_sec,
-                "thumbnail_path": str((DATA_ROOT / c.representative_thumbnail).resolve()),
+                "thumbnail_path": str((data_root() / c.representative_thumbnail).resolve()),
             }
             for c in batch
         ],
@@ -243,14 +243,16 @@ def tool_set_chapter_labels_bulk(stem: str, labels: dict) -> dict[str, Any]:
     }
 
 
-def tool_get_unlabeled_clip_thumbnails(stem: str, start_index: int = 0,
-                                        batch_size: int = 12) -> dict[str, Any]:
+def tool_get_unlabeled_clip_thumbnails(
+    stem: str, start_index: int = 0, batch_size: int = 12
+) -> dict[str, Any]:
     """Return paths for up to `batch_size` unlabeled clip thumbnails starting
     from `start_index` (clip index, not list position). Used for shot-size
     labeling."""
     a = _load_film(stem)
-    pending = [c for c in a.cuts.clips
-               if not c.shot_size and c.thumbnail and c.index >= start_index]
+    pending = [
+        c for c in a.cuts.clips if not c.shot_size and c.thumbnail and c.index >= start_index
+    ]
     batch = pending[:batch_size]
     return {
         "stem": stem,
@@ -260,7 +262,7 @@ def tool_get_unlabeled_clip_thumbnails(stem: str, start_index: int = 0,
                 "start_sec": c.start_sec,
                 "end_sec": c.end_sec,
                 "duration_sec": c.duration_sec,
-                "thumbnail_path": str((DATA_ROOT / c.thumbnail).resolve()),
+                "thumbnail_path": str((data_root() / c.thumbnail).resolve()),
             }
             for c in batch
         ],
@@ -305,15 +307,66 @@ def tool_set_shot_sizes_bulk(stem: str, sizes: dict) -> dict[str, Any]:
     }
 
 
-def tool_get_undescribed_clip_thumbnails(stem: str, start_index: int = 0,
-                                           batch_size: int = 8) -> dict[str, Any]:
+def _clip_description_schema_hint(pack) -> dict[str, Any]:
+    """Genre-aware vocabulary for clip description workflows."""
+    return {
+        "scene_labels": list(pack.scene_labels),
+        "subjects": list(pack.scene_labels),
+        "setting": ["interior", "exterior", "studio", "venue", "landscape", "other"],
+        "lighting": [
+            "natural_daylight",
+            "golden_hour",
+            "overcast",
+            "warm_indoor",
+            "dim_indoor",
+            "mixed",
+            "night",
+            "other",
+        ],
+        "camera": [
+            "locked",
+            "slight_handheld",
+            "handheld",
+            "push_in",
+            "pull_back",
+            "pan",
+            "tilt",
+            "gimbal_walk",
+            "drone",
+            "rack_focus",
+            "slow_motion",
+        ],
+        "mood": [
+            "tender",
+            "joyful",
+            "ceremonial",
+            "intimate",
+            "candid",
+            "kinetic",
+            "still",
+            "anticipatory",
+            "celebratory",
+            "neutral",
+        ],
+        "action": "short imperative phrase describing what subjects are doing",
+        "description": "one short free-form sentence",
+    }
+
+
+def tool_get_undescribed_clip_thumbnails(
+    stem: str, start_index: int = 0, batch_size: int = 8
+) -> dict[str, Any]:
     """Return paths for up to `batch_size` clips that DO NOT yet have a
     shot_description, starting at clip index `start_index`. Used by Claude
     Desktop's describe-clips workflow."""
     a = _load_film(stem)
-    pending = [c for c in a.cuts.clips
-               if c.shot_description is None and c.thumbnail and c.index >= start_index]
+    pending = [
+        c
+        for c in a.cuts.clips
+        if c.shot_description is None and c.thumbnail and c.index >= start_index
+    ]
     batch = pending[:batch_size]
+    pack = _active_pack()
     return {
         "stem": stem,
         "clips": [
@@ -323,36 +376,15 @@ def tool_get_undescribed_clip_thumbnails(stem: str, start_index: int = 0,
                 "end_sec": c.end_sec,
                 "duration_sec": c.duration_sec,
                 "shot_size": c.shot_size,
-                "thumbnail_path": str((DATA_ROOT / c.thumbnail).resolve()),
+                "thumbnail_path": str((data_root() / c.thumbnail).resolve()),
             }
             for c in batch
         ],
         "remaining_after_batch": max(
             0,
-            sum(1 for c in a.cuts.clips
-                if c.shot_description is None and c.thumbnail) - len(batch),
+            sum(1 for c in a.cuts.clips if c.shot_description is None and c.thumbnail) - len(batch),
         ),
-        "schema_hint": {
-            "subjects": ["bride", "groom", "couple", "wedding_party",
-                         "officiant", "parents", "family", "kids", "guests",
-                         "details_only"],
-            "setting": ["altar", "aisle", "lawn", "garden", "dance_floor",
-                        "tent", "ballroom", "ceremony_seating",
-                        "getting_ready_room", "reception_table", "hallway",
-                        "exterior_landscape", "interior_other", "vehicle"],
-            "lighting": ["golden_hour", "natural_daylight", "overcast",
-                         "candle", "warm_indoor", "mixed_indoor",
-                         "dim_indoor", "uplighting_warm", "uplighting_cool",
-                         "dance_floor", "night_exterior"],
-            "camera": ["locked", "slight_handheld", "handheld", "push_in",
-                       "pull_back", "pan", "tilt", "gimbal_walk", "drone",
-                       "rack_focus", "slow_motion"],
-            "mood": ["tender", "joyful", "ceremonial", "intimate", "candid",
-                     "kinetic", "still", "anticipatory", "celebratory"],
-            "action": "short imperative phrase, e.g. 'embracing', "
-                      "'walking down aisle', 'looking down at flowers'",
-            "description": "one short free-form sentence",
-        },
+        "schema_hint": _clip_description_schema_hint(pack),
     }
 
 
@@ -361,6 +393,7 @@ def tool_set_clip_descriptions_bulk(stem: str, descriptions: dict) -> dict[str, 
     clip_index (int) → ShotDescription dict (or None to clear). Each value
     is validated as a ShotDescription pydantic model."""
     from .schemas import ShotDescription
+
     a = _load_film(stem)
     written = 0
     skipped: list[dict] = []
@@ -391,14 +424,12 @@ def tool_set_clip_descriptions_bulk(stem: str, descriptions: dict) -> dict[str, 
         "descriptions_applied": written,
         "skipped": skipped,
         "remaining_undescribed": sum(
-            1 for c in a.cuts.clips
-            if c.shot_description is None and c.thumbnail
+            1 for c in a.cuts.clips if c.shot_description is None and c.thumbnail
         ),
     }
 
 
-def tool_set_chapter_label(stem: str, chapter_index: int,
-                           label: str | None) -> dict[str, Any]:
+def tool_set_chapter_label(stem: str, chapter_index: int, label: str | None) -> dict[str, Any]:
     """Correct a chapter's scene label. The vision pass uses these
     corrections as few-shot examples on subsequent runs.
 
@@ -407,8 +438,7 @@ def tool_set_chapter_label(stem: str, chapter_index: int,
     a = _load_film(stem)
     if chapter_index < 0 or chapter_index >= len(a.chapters):
         raise MCPServerError(
-            f"chapter_index {chapter_index} out of range "
-            f"(film has {len(a.chapters)} chapters)"
+            f"chapter_index {chapter_index} out of range (film has {len(a.chapters)} chapters)"
         )
     if label is not None:
         label = str(label).strip().lower().replace(" ", "_") or None
@@ -422,8 +452,9 @@ def tool_set_chapter_label(stem: str, chapter_index: int,
     }
 
 
-def tool_compare_fcpxml(fcpxml_content: str | None = None,
-                        fcpxml_path: str | None = None) -> dict[str, Any]:
+def tool_compare_fcpxml(
+    fcpxml_content: str | None = None, fcpxml_path: str | None = None
+) -> dict[str, Any]:
     """Compare a rough-cut FCPXML against the established style profile.
 
     Pass either fcpxml_content (the XML as a string) OR fcpxml_path (a
@@ -431,6 +462,7 @@ def tool_compare_fcpxml(fcpxml_content: str | None = None,
     drift and concrete suggestions.
     """
     import tempfile
+
     from .fcpxml_parser import parse as parse_fcpxml
     from .server import _build_compare_report
 
@@ -462,6 +494,7 @@ def tool_compare_fcpxml(fcpxml_content: str | None = None,
 # by nature, so we keep the API surface minimal and return a structured result.
 # ---------------------------------------------------------------------------
 
+
 def _expand_video_paths(paths: list[str]) -> list[Path]:
     """Resolve a mix of file paths and folder paths to a flat list of video files."""
     out: list[Path] = []
@@ -470,10 +503,11 @@ def _expand_video_paths(paths: list[str]) -> list[Path]:
         if not p.exists():
             raise MCPServerError(f"path not found: {p}")
         if p.is_dir():
-            out.extend(sorted(
-                f for f in p.iterdir()
-                if f.is_file() and f.suffix.lower() in SUPPORTED_VIDEO
-            ))
+            out.extend(
+                sorted(
+                    f for f in p.iterdir() if f.is_file() and f.suffix.lower() in SUPPORTED_VIDEO
+                )
+            )
         elif p.suffix.lower() in SUPPORTED_VIDEO:
             out.append(p)
         else:
@@ -514,14 +548,20 @@ def tool_analyze_films(
     for f in files:
         out_path = ANALYSES_DIR / f"{f.stem}.json"
         if out_path.exists() and not force:
-            results.append({
-                "file": str(f), "stem": f.stem,
-                "status": "skipped", "reason": "already analyzed; pass force=true to redo",
-            })
+            results.append(
+                {
+                    "file": str(f),
+                    "stem": f.stem,
+                    "status": "skipped",
+                    "reason": "already analyzed; pass force=true to redo",
+                }
+            )
             continue
         try:
             result = analyze_film(
-                f, THUMBS_DIR, pack,
+                f,
+                THUMBS_DIR,
+                pack,
                 audio_root=AUDIO_DIR,
                 min_scene_length_sec=cfg.min_scene_length_sec,
                 threshold=cfg.scene_detect_threshold,
@@ -535,19 +575,27 @@ def tool_analyze_films(
                 cleanup_audio=cfg.cleanup_audio_after_analysis,
             )
             out_path.write_text(result.model_dump_json(indent=2))
-            results.append({
-                "file": str(f), "stem": f.stem, "status": "ok",
-                "clip_count": result.cuts.total,
-                "avg_clip_sec": result.pacing.avg_clip_duration_sec,
-                "duration_sec": result.film.duration_sec,
-                "has_audio": result.audio is not None,
-                "has_color": result.color is not None,
-            })
+            results.append(
+                {
+                    "file": str(f),
+                    "stem": f.stem,
+                    "status": "ok",
+                    "clip_count": result.cuts.total,
+                    "avg_clip_sec": result.pacing.avg_clip_duration_sec,
+                    "duration_sec": result.film.duration_sec,
+                    "has_audio": result.audio is not None,
+                    "has_color": result.color is not None,
+                }
+            )
         except Exception as e:
-            results.append({
-                "file": str(f), "stem": f.stem,
-                "status": "failed", "error": str(e),
-            })
+            results.append(
+                {
+                    "file": str(f),
+                    "stem": f.stem,
+                    "status": "failed",
+                    "error": str(e),
+                }
+            )
 
     ok = [r for r in results if r["status"] == "ok"]
     return {
@@ -557,8 +605,7 @@ def tool_analyze_films(
         "failed": sum(1 for r in results if r["status"] == "failed"),
         "results": results,
         "next_step": (
-            "Call generate_guide() to write style-guide.md and style-profile.json"
-            if ok else None
+            "Call generate_guide() to write style-guide.md and style-profile.json" if ok else None
         ),
     }
 
@@ -588,26 +635,25 @@ def tool_generate_guide(
     cfg = load_config()
     analyses = _load_all_films()
     if not analyses:
-        raise MCPServerError(
-            "no analyses found — call analyze_films() first."
-        )
+        raise MCPServerError("no analyses found — call analyze_films() first.")
 
     notes: list[str] = []
 
     from .genre_pack import load as load_genre_pack
+
     pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
 
     if vision:
         from .vision_classify import VisionError, classify_chapters, gather_existing_examples
-        examples = gather_existing_examples(ANALYSES_DIR, DATA_ROOT)
+
+        examples = gather_existing_examples(ANALYSES_DIR, data_root())
         for a in analyses:
-            unlabeled = [c for c in a.chapters
-                         if not c.label and c.representative_thumbnail]
+            unlabeled = [c for c in a.chapters if not c.label and c.representative_thumbnail]
             if not unlabeled:
                 continue
             try:
                 labels = classify_chapters(
-                    [DATA_ROOT / c.representative_thumbnail for c in unlabeled],
+                    [data_root() / c.representative_thumbnail for c in unlabeled],
                     pack,
                     model=cfg.anthropic_model,
                     examples=examples,
@@ -622,13 +668,14 @@ def tool_generate_guide(
 
     if shot_sizes:
         from .shot_size import ShotSizeError, classify_shots
+
         for a in analyses:
             unlabeled = [c for c in a.cuts.clips if not c.shot_size and c.thumbnail]
             if not unlabeled:
                 continue
             try:
                 labels = classify_shots(
-                    [DATA_ROOT / c.thumbnail for c in unlabeled],
+                    [data_root() / c.thumbnail for c in unlabeled],
                     pack,
                     model=cfg.anthropic_model,
                 )
@@ -650,8 +697,9 @@ def tool_generate_guide(
     STATS_PATH.write_text(json.dumps(stats, indent=2, default=str))
 
     try:
-        md = write_guide(stats, pack, model=cfg.anthropic_model,
-                         backend=getattr(cfg, "claude_backend", "api"))
+        md = write_guide(
+            stats, pack, model=cfg.anthropic_model, backend=getattr(cfg, "claude_backend", "api")
+        )
         GUIDE_PATH.write_text(md)
         guide_status = "written"
     except Exception as e:
@@ -710,8 +758,7 @@ def tool_import_videos(
         "downloaded": new_files,
         "transcript_tail": transcript_lines[-12:],
         "next_step": (
-            f"Call analyze_films(paths=['{target}'])"
-            if new_files else "Nothing new downloaded."
+            f"Call analyze_films(paths=['{target}'])" if new_files else "Nothing new downloaded."
         ),
     }
 
@@ -766,7 +813,8 @@ def tool_analyze_url(
         "analysis": analysis_result,
         "next_step": (
             "Call generate_guide() to update the style guide and profile."
-            if analysis_result.get("succeeded") else None
+            if analysis_result.get("succeeded")
+            else None
         ),
     }
 
@@ -821,11 +869,13 @@ def tool_analyze_youtube_via_gemini(
                 existing = []
         # Replace if same URL already present, otherwise append.
         existing = [e for e in existing if e.get("url") != url]
-        existing.append({
-            "url": url,
-            "added_at": datetime.now(timezone.utc).isoformat(),
-            "analysis": result.get("analysis"),
-        })
+        existing.append(
+            {
+                "url": url,
+                "added_at": datetime.now(timezone.utc).isoformat(),
+                "analysis": result.get("analysis"),
+            }
+        )
         inspirations_path.parent.mkdir(parents=True, exist_ok=True)
         inspirations_path.write_text(json.dumps(existing, indent=2, default=str))
         result["saved_to"] = str(inspirations_path)
@@ -874,9 +924,7 @@ def tool_export_for_notebooklm(
     pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
     films = _load_all_films()
     if not films:
-        raise MCPServerError(
-            "no analyses to export. Call analyze_films() first."
-        )
+        raise MCPServerError("no analyses to export. Call analyze_films() first.")
 
     profile: dict = {}
     if PROFILE_PATH.is_file():
@@ -894,11 +942,14 @@ def tool_export_for_notebooklm(
             except json.JSONDecodeError:
                 inspirations = None
 
-    target = Path(output_path).expanduser() if output_path else (
-        _GENRE_ROOT / "notebooklm-brief.md"
+    target = (
+        Path(output_path).expanduser() if output_path else (_GENRE_ROOT / "notebooklm-brief.md")
     )
     write_brief(
-        films, profile, target, pack,
+        films,
+        profile,
+        target,
+        pack,
         inspirations=inspirations,
         title=title or "Editing Style Profile (for NotebookLM)",
         brand_name=cfg.brand_name,
@@ -933,13 +984,11 @@ def tool_corpus_report() -> dict[str, Any]:
         "film_count": len(films),
         "guide_present": GUIDE_PATH.is_file(),
         "profile_present": PROFILE_PATH.is_file(),
-        "data_root": str(DATA_ROOT),
+        "data_root": str(data_root()),
     }
     if not films:
         summary["status"] = "empty"
-        summary["next_step"] = (
-            "Call analyze_films(paths=[...]) on a folder of films to begin."
-        )
+        summary["next_step"] = "Call analyze_films(paths=[...]) on a folder of films to begin."
         return summary
 
     stats = aggregate(films)
@@ -949,24 +998,25 @@ def tool_corpus_report() -> dict[str, Any]:
     # Outliers: films farthest from the corpus mean by cosine distance.
     if len(films) >= 3:
         from .matchmaker import build_vector
+
         vectors = [build_vector(f) for f in films]
         keys = sorted(vectors[0].dimensions)
         # Centroid.
-        centroid = {k: sum(v.dimensions[k] for v in vectors) / len(vectors)
-                    for k in keys}
+        centroid = {k: sum(v.dimensions[k] for v in vectors) / len(vectors) for k in keys}
         import math
+
         def _cos(a_dims, b_dims):
             dot = sum(a_dims[k] * b_dims[k] for k in keys)
             na = math.sqrt(sum(a_dims[k] ** 2 for k in keys))
             nb = math.sqrt(sum(b_dims[k] ** 2 for k in keys))
             return dot / (na * nb) if na and nb else 0.0
+
         ranked = sorted(
             [(v.filename, _cos(v.dimensions, centroid)) for v in vectors],
             key=lambda kv: kv[1],
         )
         summary["outliers"] = [
-            {"filename": fn, "centroid_similarity": round(s, 4)}
-            for fn, s in ranked[:3]
+            {"filename": fn, "centroid_similarity": round(s, 4)} for fn, s in ranked[:3]
         ]
 
     # Coverage flags — what dimensions are still missing for the LLM to call out.
@@ -974,24 +1024,24 @@ def tool_corpus_report() -> dict[str, Any]:
     has_audio = sum(1 for f in films if f.audio)
     has_music = sum(1 for f in films if f.music)
     has_vision = sum(1 for f in films if any(c.label for c in f.chapters))
-    has_shot_sizes = sum(1 for f in films
-                         if any(c.shot_size for c in f.cuts.clips))
+    has_shot_sizes = sum(1 for f in films if any(c.shot_size for c in f.cuts.clips))
     has_metadata = sum(1 for f in films if f.metadata)
     summary["coverage"] = {
-        "color":      f"{has_color}/{len(films)}",
-        "audio":      f"{has_audio}/{len(films)}",
-        "music":      f"{has_music}/{len(films)}",
-        "vision":     f"{has_vision}/{len(films)}",
+        "color": f"{has_color}/{len(films)}",
+        "audio": f"{has_audio}/{len(films)}",
+        "music": f"{has_music}/{len(films)}",
+        "vision": f"{has_vision}/{len(films)}",
         "shot_sizes": f"{has_shot_sizes}/{len(films)}",
-        "metadata":   f"{has_metadata}/{len(films)}",
+        "metadata": f"{has_metadata}/{len(films)}",
     }
 
     summary["status"] = "ready"
     return summary
 
 
-def tool_predict_cuts(song_path: str, target_duration_sec: float | None = None,
-                      snap_tolerance_sec: float = 0.12) -> dict[str, Any]:
+def tool_predict_cuts(
+    song_path: str, target_duration_sec: float | None = None, snap_tolerance_sec: float = 0.12
+) -> dict[str, Any]:
     """Predict cut times for a song using the established style profile.
 
     Walks the profile's decile pacing curve, snapping each ideal cut to the
@@ -1006,13 +1056,12 @@ def tool_predict_cuts(song_path: str, target_duration_sec: float | None = None,
     if not p.is_file():
         raise MCPServerError(f"song file not found: {p}")
     if not PROFILE_PATH.is_file():
-        raise MCPServerError(
-            f"no style profile at {PROFILE_PATH}. Run `film-style guide` first."
-        )
+        raise MCPServerError(f"no style profile at {PROFILE_PATH}. Run `film-style guide` first.")
     profile_data = json.loads(PROFILE_PATH.read_text())
     try:
         prediction = predict_cuts(
-            p, profile_data,
+            p,
+            profile_data,
             target_duration_sec=target_duration_sec,
             snap_tolerance_sec=snap_tolerance_sec,
         )
@@ -1036,12 +1085,16 @@ def tool_predict_cuts(song_path: str, target_duration_sec: float | None = None,
 # Resources — exposed at film-style:// URIs.
 # ---------------------------------------------------------------------------
 
+
 def resource_profile() -> str:
     if not PROFILE_PATH.is_file():
-        return json.dumps({
-            "error": "style-profile.json does not exist yet",
-            "remedy": "Run `film-style analyze <folder>` then `film-style guide`.",
-        }, indent=2)
+        return json.dumps(
+            {
+                "error": "style-profile.json does not exist yet",
+                "remedy": "Run `film-style analyze <folder>` then `film-style guide`.",
+            },
+            indent=2,
+        )
     return PROFILE_PATH.read_text()
 
 
@@ -1120,6 +1173,7 @@ Editing rules:
 # MCP wiring — kept inside a function so the heavy import only happens when
 # the server is actually started.
 # ---------------------------------------------------------------------------
+
 
 def build_server():
     """Construct the FastMCP server. Heavy: imports the mcp SDK."""
@@ -1204,8 +1258,10 @@ def build_server():
         return tool_analyze_url(
             url,
             cookies_browser=cookies_browser,
-            skip_audio=skip_audio, skip_color=skip_color,
-            color_every_n=color_every_n, music=music,
+            skip_audio=skip_audio,
+            skip_color=skip_color,
+            color_every_n=color_every_n,
+            music=music,
         )
 
     @mcp.tool()
@@ -1224,7 +1280,8 @@ def build_server():
         the full local pipeline. Results save to inspirations.json by
         default — future guide passes will use them as qualitative context."""
         return tool_analyze_youtube_via_gemini(
-            url, custom_prompt=custom_prompt,
+            url,
+            custom_prompt=custom_prompt,
             save_as_inspiration=save_as_inspiration,
         )
 
@@ -1253,8 +1310,9 @@ def build_server():
         )
 
     @mcp.tool()
-    def import_videos(url: str, output_dir: str | None = None,
-                      cookies_browser: str | None = None) -> dict:
+    def import_videos(
+        url: str, output_dir: str | None = None, cookies_browser: str | None = None
+    ) -> dict:
         """Download videos from a Vimeo or YouTube URL (or any yt-dlp source).
 
         Examples:
@@ -1320,6 +1378,7 @@ def build_server():
         Anthropic API. Use it to label your own corpus without consuming
         API tokens."""
         from mcp.server.fastmcp.utilities.types import Image as MCPImage
+
         info = tool_get_unlabeled_chapter_thumbnails(stem, max_chapters=max_chapters)
         out: list = [
             f"Film: {info['stem']}",
@@ -1355,16 +1414,18 @@ def build_server():
         return tool_set_chapter_labels_bulk(stem, labels)
 
     @mcp.tool()
-    def get_clip_thumbnails_to_label_shots(stem: str, start_index: int = 0,
-                                            batch_size: int = 12):
+    def get_clip_thumbnails_to_label_shots(stem: str, start_index: int = 0, batch_size: int = 12):
         """Return image content blocks for up to `batch_size` UNLABELED clip
         thumbnails of `stem`, starting at clip index `start_index`. Look at
         each, decide a shot size from the pack's shot_labels, then call
         `set_shot_sizes_bulk` with the mapping. Iterate via `start_index` to
         cover the full film."""
         from mcp.server.fastmcp.utilities.types import Image as MCPImage
+
         info = tool_get_unlabeled_clip_thumbnails(
-            stem, start_index=start_index, batch_size=batch_size,
+            stem,
+            start_index=start_index,
+            batch_size=batch_size,
         )
         out: list = [
             f"Film: {info['stem']}",
@@ -1381,9 +1442,7 @@ def build_server():
                 out.append(MCPImage(path=c["thumbnail_path"]))
             except Exception as e:
                 out.append(f"[failed to load thumbnail: {e}]")
-        out.append(
-            "Now call set_shot_sizes_bulk(stem=..., sizes={clip_index: label, ...})."
-        )
+        out.append("Now call set_shot_sizes_bulk(stem=..., sizes={clip_index: label, ...}).")
         return out
 
     @mcp.tool()
@@ -1394,8 +1453,7 @@ def build_server():
         return tool_set_shot_sizes_bulk(stem, sizes)
 
     @mcp.tool()
-    def get_clip_thumbnails_to_describe(stem: str, start_index: int = 0,
-                                        batch_size: int = 8):
+    def get_clip_thumbnails_to_describe(stem: str, start_index: int = 0, batch_size: int = 8):
         """Return image content blocks for up to `batch_size` clips that
         DON'T yet have a shot_description, starting at clip index
         `start_index`. Look at each thumbnail and emit a structured
@@ -1410,8 +1468,11 @@ def build_server():
         field — use those values where they fit, free text where they
         don't."""
         from mcp.server.fastmcp.utilities.types import Image as MCPImage
+
         info = tool_get_undescribed_clip_thumbnails(
-            stem, start_index=start_index, batch_size=batch_size,
+            stem,
+            start_index=start_index,
+            batch_size=batch_size,
         )
         out: list = [
             f"Film: {info['stem']}",
@@ -1447,24 +1508,46 @@ def build_server():
         return tool_set_clip_descriptions_bulk(stem, descriptions)
 
     @mcp.tool()
-    def compare_fcpxml(fcpxml_content: str | None = None,
-                       fcpxml_path: str | None = None) -> dict:
+    def compare_fcpxml(fcpxml_content: str | None = None, fcpxml_path: str | None = None) -> dict:
         """Compare a rough-cut FCPXML against the established profile.
         Provide either the XML content or a filesystem path."""
         return tool_compare_fcpxml(fcpxml_content, fcpxml_path)
 
     @mcp.tool()
-    def predict_cuts(song_path: str, target_duration_sec: float | None = None,
-                     snap_tolerance_sec: float = 0.12) -> dict:
+    def predict_cuts(
+        song_path: str, target_duration_sec: float | None = None, snap_tolerance_sec: float = 0.12
+    ) -> dict:
         """Predict cut times for a song using the editor's pacing profile.
         Snaps each ideal cut to the nearest beat in the song. Returns
         timestamps + an FCPXML marker track string."""
         return tool_predict_cuts(song_path, target_duration_sec, snap_tolerance_sec)
 
     # --- resources ---
+    active_genre = paths_for_genre().genre
+
+    @mcp.resource(f"film-style://{active_genre}/profile")
+    def res_genre_profile() -> str:
+        """Style profile (JSON) for the active genre workspace."""
+        return resource_profile()
+
+    @mcp.resource(f"film-style://{active_genre}/guide")
+    def res_genre_guide() -> str:
+        """Markdown style guide for the active genre workspace."""
+        return resource_guide()
+
+    @mcp.resource(f"film-style://{active_genre}/films")
+    def res_genre_films() -> str:
+        """Index of analyzed films (JSON) for the active genre workspace."""
+        return resource_films_index()
+
+    @mcp.resource(f"film-style://{active_genre}/films/{{stem}}")
+    def res_genre_film(stem: str) -> str:
+        """Full analysis for one film (JSON) in the active genre workspace."""
+        return resource_film(stem)
+
     @mcp.resource("film-style://profile")
     def res_profile() -> str:
-        """Style profile (JSON)."""
+        """Style profile (JSON). Legacy alias for the active genre."""
         return resource_profile()
 
     @mcp.resource("film-style://guide")
@@ -1494,5 +1577,10 @@ def build_server():
 
 def run_stdio() -> None:
     """Start the MCP server on stdio. Blocks. Used by `film-style mcp-serve`."""
+    if legacy_layout_present():
+        raise MCPServerError(
+            "Detected legacy data layout (analyses/ at root). "
+            "Run `film-style migrate --to <genre>` before starting MCP."
+        )
     server = build_server()
     server.run()

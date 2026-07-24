@@ -62,33 +62,39 @@ def classify_chapters(
     if examples:
         chosen = _pick_diverse_examples(examples, max_examples)
         if chosen:
-            example_user_content: list[dict] = [{
-                "type": "text",
-                "text": (
-                    "Reference labels from this editor's prior work — match this "
-                    "labeling convention when in doubt. For each image below, the "
-                    "expected label is shown."
-                ),
-            }]
+            example_user_content: list[dict] = [
+                {
+                    "type": "text",
+                    "text": (
+                        "Reference labels from this editor's prior work — match this "
+                        "labeling convention when in doubt. For each image below, the "
+                        "expected label is shown."
+                    ),
+                }
+            ]
             for path, label in chosen:
                 if not path or not path.exists():
                     continue
-                example_user_content.append({
-                    "type": "text",
-                    "text": f"Reference: {label}",
-                })
+                example_user_content.append(
+                    {
+                        "type": "text",
+                        "text": f"Reference: {label}",
+                    }
+                )
                 example_user_content.append(_encode(path))
             if len(example_user_content) > 1:
                 example_msgs = [
                     {"role": "user", "content": example_user_content},
-                    {"role": "assistant",
-                     "content": "Understood. I will follow these conventions."},
+                    {
+                        "role": "assistant",
+                        "content": "Understood. I will follow these conventions.",
+                    },
                 ]
 
     BATCH = 20
     labels: list[str] = []
     for start in range(0, len(thumbnail_paths), BATCH):
-        batch = thumbnail_paths[start:start + BATCH]
+        batch = thumbnail_paths[start : start + BATCH]
         content = []
         for i, p in enumerate(batch, 1):
             if not p.exists():
@@ -111,13 +117,13 @@ def classify_chapters(
             raise VisionError(f"Anthropic API call failed: {e}") from e
         text = "".join(b.text for b in msg.content if hasattr(b, "text"))
         try:
-            payload = json.loads(text[text.find("{"):text.rfind("}") + 1])
+            payload = json.loads(text[text.find("{") : text.rfind("}") + 1])
             batch_labels = payload.get("labels", [])
         except (json.JSONDecodeError, ValueError):
             batch_labels = []
         while len(batch_labels) < len(batch):
             batch_labels.append("other")
-        labels.extend(batch_labels[:len(batch)])
+        labels.extend(batch_labels[: len(batch)])
 
     return [l if l in valid_labels else "other" for l in labels]
 
@@ -150,6 +156,7 @@ def gather_existing_examples(analyses_dir: Path, data_root: Path) -> list[tuple[
     if not analyses_dir.exists():
         return out
     import json as _json
+
     for jp in sorted(analyses_dir.glob("*.json")):
         try:
             data = _json.loads(jp.read_text())

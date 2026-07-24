@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from film_style_analyzer import genre_pack
-from film_style_analyzer.guide_writer import build_system_prompt
 from film_style_analyzer.gemini_analyzer import build_film_prompt, build_youtube_prompt
+from film_style_analyzer.guide_writer import build_system_prompt
 from film_style_analyzer.notebooklm_export import build_brief_intro
 
 

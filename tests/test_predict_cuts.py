@@ -40,18 +40,34 @@ def test_to_fcpxml_markers_produces_valid_xml(tmp_path: Path):
         "predicted_cut_count": 3,
         "on_beat_pct": 100.0,
         "cuts": [
-            {"time_sec": 5.0, "ideal_target_sec": 5.0, "target_clip_dur_sec": 5.0,
-             "snapped_to_beat": True, "decile": 0},
-            {"time_sec": 12.0, "ideal_target_sec": 12.0, "target_clip_dur_sec": 7.0,
-             "snapped_to_beat": False, "decile": 2},
-            {"time_sec": 30.0, "ideal_target_sec": 30.0, "target_clip_dur_sec": 18.0,
-             "snapped_to_beat": True, "decile": 5},
+            {
+                "time_sec": 5.0,
+                "ideal_target_sec": 5.0,
+                "target_clip_dur_sec": 5.0,
+                "snapped_to_beat": True,
+                "decile": 0,
+            },
+            {
+                "time_sec": 12.0,
+                "ideal_target_sec": 12.0,
+                "target_clip_dur_sec": 7.0,
+                "snapped_to_beat": False,
+                "decile": 2,
+            },
+            {
+                "time_sec": 30.0,
+                "ideal_target_sec": 30.0,
+                "target_clip_dur_sec": 18.0,
+                "snapped_to_beat": True,
+                "decile": 5,
+            },
         ],
     }
     xml_text = to_fcpxml_markers(prediction)
-    assert xml_text.startswith('<?xml')
+    assert xml_text.startswith("<?xml")
     # Valid XML — should round-trip through ET.fromstring without error.
     import xml.etree.ElementTree as ET
+
     # Strip the DOCTYPE which ET does not handle.
     body = xml_text.split("?>", 1)[1]
     if "<!DOCTYPE" in body:

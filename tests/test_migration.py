@@ -18,7 +18,8 @@ def test_migrate_moves_legacy_files(tmp_path, monkeypatch):
     (fake_root / "style-profile.json").write_text("{}")
     (fake_root / "inspirations.json").write_text("[]")
 
-    monkeypatch.setattr(cli_mod, "DATA_ROOT", fake_root)
+    monkeypatch.setattr(cli_mod, "data_root", lambda: fake_root)
+    monkeypatch.setattr("film_style_analyzer.paths.data_root", lambda: fake_root)
 
     runner = CliRunner()
     result = runner.invoke(cli_mod.cli, ["migrate", "--to", "wedding"])
@@ -33,9 +34,24 @@ def test_migrate_moves_legacy_files(tmp_path, monkeypatch):
 def test_migrate_no_legacy_errors(tmp_path, monkeypatch):
     fake_root = tmp_path / ".film-style-analyzer"
     fake_root.mkdir()
-    monkeypatch.setattr(cli_mod, "DATA_ROOT", fake_root)
+    monkeypatch.setattr(cli_mod, "data_root", lambda: fake_root)
+    monkeypatch.setattr("film_style_analyzer.paths.data_root", lambda: fake_root)
 
     runner = CliRunner()
     result = runner.invoke(cli_mod.cli, ["migrate", "--to", "wedding"])
     assert result.exit_code != 0
     assert "no legacy" in result.output.lower()
+
+
+def test_legacy_layout_blocks_stats(tmp_path, monkeypatch):
+    fake_root = tmp_path / ".film-style-analyzer"
+    fake_root.mkdir()
+    (fake_root / "analyses").mkdir()
+    monkeypatch.setattr("film_style_analyzer.paths.data_root", lambda: fake_root)
+    monkeypatch.setattr("film_style_analyzer.cli.legacy_layout_present", lambda: True)
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    runner = CliRunner()
+    result = runner.invoke(cli_mod.cli, ["stats"])
+    assert result.exit_code != 0
+    assert "legacy" in result.output.lower()

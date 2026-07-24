@@ -16,7 +16,6 @@ is consumed programmatically:
 from __future__ import annotations
 
 import statistics
-from dataclasses import asdict
 from typing import Any
 
 from . import __version__
@@ -106,16 +105,18 @@ def build_profile(
     # ---- audio ------------------------------------------------------------
     audio_block: dict[str, Any] = {"present": audio is not None}
     if audio:
-        audio_block.update({
-            "music_only_pct_target": audio.get("music_only_pct_avg"),
-            "speech_over_music_pct_target": audio.get("speech_over_music_pct_avg"),
-            "ambient_pct_target": audio.get("ambient_pct_avg"),
-            "first_speech_at_pct_target": audio.get("first_speech_at_pct_avg"),
-            "first_speech_at_sec_target": audio.get("first_speech_at_sec_avg"),
-            "speech_segments_per_film_target": audio.get("speech_segments_per_film_avg"),
-            "avg_speech_segment_sec_target": audio.get("avg_speech_segment_sec"),
-            "longest_speech_segment_sec_target": audio.get("longest_speech_segment_sec_avg"),
-        })
+        audio_block.update(
+            {
+                "music_only_pct_target": audio.get("music_only_pct_avg"),
+                "speech_over_music_pct_target": audio.get("speech_over_music_pct_avg"),
+                "ambient_pct_target": audio.get("ambient_pct_avg"),
+                "first_speech_at_pct_target": audio.get("first_speech_at_pct_avg"),
+                "first_speech_at_sec_target": audio.get("first_speech_at_sec_avg"),
+                "speech_segments_per_film_target": audio.get("speech_segments_per_film_avg"),
+                "avg_speech_segment_sec_target": audio.get("avg_speech_segment_sec"),
+                "longest_speech_segment_sec_target": audio.get("longest_speech_segment_sec_avg"),
+            }
+        )
         first_pct = audio.get("first_speech_at_pct_avg")
         first_sec = audio.get("first_speech_at_sec_avg") or 0
         speech_over = audio.get("speech_over_music_pct_avg")
@@ -144,9 +145,7 @@ def build_profile(
                     f"runtime; cut to b-roll under speech, not over silence."
                 )
         elif pack.audio_emphasis == "beat_locked":
-            rules.append(
-                "Lock cuts to the music beat — see music block for tempo target."
-            )
+            rules.append("Lock cuts to the music beat — see music block for tempo target.")
         elif pack.audio_emphasis == "hook_driven":
             if first_sec is not None:
                 rules.append(
@@ -162,19 +161,37 @@ def build_profile(
     with_color = [f for f in films if f.color]
     color_block: dict[str, Any] = {"present": bool(with_color)}
     if with_color:
-        lum = [f.color.get("mean_luminance") for f in with_color if f.color.get("mean_luminance") is not None]
-        contrast = [f.color.get("mean_contrast") for f in with_color if f.color.get("mean_contrast") is not None]
-        wc = [f.color.get("mean_warm_cool") for f in with_color if f.color.get("mean_warm_cool") is not None]
-        sat = [f.color.get("mean_saturation") for f in with_color if f.color.get("mean_saturation") is not None]
-        color_block.update({
-            "films_analyzed": len(with_color),
-            "mean_luminance": round(statistics.fmean(lum), 1) if lum else None,
-            "mean_contrast": round(statistics.fmean(contrast), 1) if contrast else None,
-            "mean_warm_cool": round(statistics.fmean(wc), 3) if wc else None,
-            "mean_saturation": round(statistics.fmean(sat), 1) if sat else None,
-            "dominant_palette": _aggregate_color_palette(with_color),
-            "tone_labels_seen": _count_tone_labels(with_color),
-        })
+        lum = [
+            f.color.get("mean_luminance")
+            for f in with_color
+            if f.color.get("mean_luminance") is not None
+        ]
+        contrast = [
+            f.color.get("mean_contrast")
+            for f in with_color
+            if f.color.get("mean_contrast") is not None
+        ]
+        wc = [
+            f.color.get("mean_warm_cool")
+            for f in with_color
+            if f.color.get("mean_warm_cool") is not None
+        ]
+        sat = [
+            f.color.get("mean_saturation")
+            for f in with_color
+            if f.color.get("mean_saturation") is not None
+        ]
+        color_block.update(
+            {
+                "films_analyzed": len(with_color),
+                "mean_luminance": round(statistics.fmean(lum), 1) if lum else None,
+                "mean_contrast": round(statistics.fmean(contrast), 1) if contrast else None,
+                "mean_warm_cool": round(statistics.fmean(wc), 3) if wc else None,
+                "mean_saturation": round(statistics.fmean(sat), 1) if sat else None,
+                "dominant_palette": _aggregate_color_palette(with_color),
+                "tone_labels_seen": _count_tone_labels(with_color),
+            }
+        )
         if wc:
             wc_avg = statistics.fmean(wc)
             tendency = "warm" if wc_avg > 0.1 else ("cool" if wc_avg < -0.1 else "neutral")
@@ -207,20 +224,20 @@ def build_profile(
         keys = [f.music.get("key") for f in with_music if f.music.get("key")]
         if keys:
             from collections import Counter
+
             common = Counter(keys).most_common(3)
             music_block["common_keys"] = [{"key": k, "count": n} for k, n in common]
 
         # Cut-on-beat — average across films that have it.
-        on_beats = [f.music["beat_alignment"]["on_beat_pct"]
-                    for f in with_music
-                    if f.music.get("beat_alignment")]
+        on_beats = [
+            f.music["beat_alignment"]["on_beat_pct"]
+            for f in with_music
+            if f.music.get("beat_alignment")
+        ]
         if on_beats:
             avg = round(statistics.fmean(on_beats), 1)
             music_block["cut_on_beat_pct_target"] = avg
-            rules.append(
-                f"Land {avg:.0f}% of cuts on a music beat "
-                f"(within ~60 ms tolerance)."
-            )
+            rules.append(f"Land {avg:.0f}% of cuts on a music beat (within ~60 ms tolerance).")
 
     # ---- scenes (chapter breakdown) --------------------------------------
     scenes_block = {
@@ -260,8 +277,7 @@ def build_profile(
     }
     if opening.get("avg_first_cut_at_sec"):
         rules.append(
-            f"Hold the first shot for ~{opening['avg_first_cut_at_sec']:.1f}s "
-            "before the first cut."
+            f"Hold the first shot for ~{opening['avg_first_cut_at_sec']:.1f}s before the first cut."
         )
     if closing.get("fade_to_black_ratio") and closing["fade_to_black_ratio"] > 0.5:
         rules.append("End with a fade to black.")

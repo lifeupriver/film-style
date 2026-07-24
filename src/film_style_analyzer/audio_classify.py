@@ -58,10 +58,14 @@ def _detect_overlaps(speech_segs: list[dict], music_segs: list[dict]) -> list[di
     cur_label: str | None = None
     for t, kind, what in events:
         if cur_label and t > cur_t:
-            out.append({
-                "start_sec": cur_t, "end_sec": t, "type": cur_label,
-                "duration_sec": round(t - cur_t, 2),
-            })
+            out.append(
+                {
+                    "start_sec": cur_t,
+                    "end_sec": t,
+                    "type": cur_label,
+                    "duration_sec": round(t - cur_t, 2),
+                }
+            )
         if kind == "start":
             active[what] += 1
         else:
@@ -97,8 +101,12 @@ def classify(wav_path: Path, total_duration_sec: float) -> dict:
     noise_segs: list[dict] = []
     for label, start, end in raw:
         kind = _normalize_label(label)
-        record = {"start_sec": float(start), "end_sec": float(end),
-                  "type": kind, "duration_sec": round(float(end) - float(start), 2)}
+        record = {
+            "start_sec": float(start),
+            "end_sec": float(end),
+            "type": kind,
+            "duration_sec": round(float(end) - float(start), 2),
+        }
         if kind == "speech":
             speech_segs.append(record)
         elif kind == "music":
@@ -118,13 +126,24 @@ def classify(wav_path: Path, total_duration_sec: float) -> dict:
                 if c["end_sec"] <= ns or c["start_sec"] >= ne:
                     continue
                 if c["start_sec"] > ns:
-                    noise_layered.append({"start_sec": ns, "end_sec": c["start_sec"],
-                                          "type": "noise",
-                                          "duration_sec": round(c["start_sec"] - ns, 2)})
+                    noise_layered.append(
+                        {
+                            "start_sec": ns,
+                            "end_sec": c["start_sec"],
+                            "type": "noise",
+                            "duration_sec": round(c["start_sec"] - ns, 2),
+                        }
+                    )
                 ns = max(ns, c["end_sec"])
             if ns < ne:
-                noise_layered.append({"start_sec": ns, "end_sec": ne, "type": "noise",
-                                      "duration_sec": round(ne - ns, 2)})
+                noise_layered.append(
+                    {
+                        "start_sec": ns,
+                        "end_sec": ne,
+                        "type": "noise",
+                        "duration_sec": round(ne - ns, 2),
+                    }
+                )
         unified = sorted(unified + noise_layered, key=lambda x: x["start_sec"])
         unified = _merge_adjacent(unified)
 
@@ -156,7 +175,8 @@ def classify(wav_path: Path, total_duration_sec: float) -> dict:
             "speech_segment_count": len(speech_segments),
             "avg_speech_segment_sec": (
                 round(sum(s["duration_sec"] for s in speech_segments) / len(speech_segments), 2)
-                if speech_segments else 0.0
+                if speech_segments
+                else 0.0
             ),
             "longest_speech_segment_sec": (
                 round(max((s["duration_sec"] for s in speech_segments), default=0.0), 2)

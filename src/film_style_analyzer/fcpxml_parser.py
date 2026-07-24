@@ -49,7 +49,9 @@ def parse(path: Path) -> dict:
             lane = elem.attrib.get("lane")
             role = (elem.attrib.get("audioRole") or elem.attrib.get("role") or "").lower()
             is_audio_lane = lane is not None and lane.lstrip("-").isdigit() and int(lane) < 0
-            is_audio = ref in audio_asset_ids or is_audio_lane or "music" in role or "dialogue" in role
+            is_audio = (
+                ref in audio_asset_ids or is_audio_lane or "music" in role or "dialogue" in role
+            )
             if is_audio:
                 if d > 0:
                     audio_lane_durations.append(d)

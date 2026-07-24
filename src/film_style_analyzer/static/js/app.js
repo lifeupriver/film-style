@@ -28,7 +28,6 @@ function applyDensity(value) {
 }
 
 async function applyBranding() {
-  // Pull brand_name from /api/config and update the masthead.
   try {
     const res = await fetch("/api/config");
     if (!res.ok) return;
@@ -37,6 +36,15 @@ async function applyBranding() {
       const node = document.querySelector('[data-id="brand-name"]');
       if (node) node.textContent = cfg.brand_name;
       document.title = `${cfg.brand_name} — film-style-analyzer`;
+    }
+    const sub = document.querySelector('[data-id="brand-sub"]');
+    if (sub && cfg.genre_display_name) {
+      sub.textContent = `Style Atelier · ${cfg.genre_display_name}`;
+    }
+    const badge = document.querySelector('[data-id="genre-badge"]');
+    if (badge && cfg.active_genre) {
+      badge.textContent = cfg.active_genre;
+      badge.hidden = false;
     }
   } catch {}
 }

@@ -21,7 +21,7 @@ def test_extract_fenced_json_with_nested_braces():
 
 
 def test_extract_strips_surrounding_prose():
-    raw = "Sure, here's the JSON: {\"foo\": \"bar\"}\nLet me know if that helps."
+    raw = 'Sure, here\'s the JSON: {"foo": "bar"}\nLet me know if that helps.'
     assert _extract_json(raw) == {"foo": "bar"}
 
 

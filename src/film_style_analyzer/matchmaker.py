@@ -38,22 +38,22 @@ class FilmVector:
 # [0, 1] without saturating.
 
 _SCALES = {
-    "pacing.avg":      (0.5, 8.0),
-    "pacing.std":      (0.0, 4.0),
-    "pacing.min":      (0.2, 5.0),
-    "pacing.max":      (1.0, 30.0),
-    "trans.hard":      (0.0, 100.0),
-    "trans.dissolve":  (0.0, 100.0),
-    "trans.fade":      (0.0, 100.0),
-    "audio.music":     (0.0, 100.0),
-    "audio.spm":       (0.0, 100.0),
-    "audio.ambient":   (0.0, 100.0),
+    "pacing.avg": (0.5, 8.0),
+    "pacing.std": (0.0, 4.0),
+    "pacing.min": (0.2, 5.0),
+    "pacing.max": (1.0, 30.0),
+    "trans.hard": (0.0, 100.0),
+    "trans.dissolve": (0.0, 100.0),
+    "trans.fade": (0.0, 100.0),
+    "audio.music": (0.0, 100.0),
+    "audio.spm": (0.0, 100.0),
+    "audio.ambient": (0.0, 100.0),
     "audio.first_pct": (0.0, 100.0),
-    "color.lum":       (0.0, 255.0),
-    "color.contrast":  (0.0, 80.0),
-    "color.wc":        (-1.0, 1.0),
-    "color.sat":       (0.0, 255.0),
-    "music.tempo":     (50.0, 180.0),
+    "color.lum": (0.0, 255.0),
+    "color.contrast": (0.0, 80.0),
+    "color.wc": (-1.0, 1.0),
+    "color.sat": (0.0, 255.0),
+    "music.tempo": (50.0, 180.0),
 }
 
 
@@ -71,31 +71,31 @@ def build_vector(film: FilmAnalysis) -> FilmVector:
 
     # Pacing
     p = film.pacing
-    dims["pacing.avg"]   = _norm("pacing.avg",   p.avg_clip_duration_sec)
-    dims["pacing.std"]   = _norm("pacing.std",   p.std_dev_sec)
-    dims["pacing.min"]   = _norm("pacing.min",   p.min_clip_sec)
-    dims["pacing.max"]   = _norm("pacing.max",   p.max_clip_sec)
+    dims["pacing.avg"] = _norm("pacing.avg", p.avg_clip_duration_sec)
+    dims["pacing.std"] = _norm("pacing.std", p.std_dev_sec)
+    dims["pacing.min"] = _norm("pacing.min", p.min_clip_sec)
+    dims["pacing.max"] = _norm("pacing.max", p.max_clip_sec)
 
     # Transitions (raw counts → percentages).
     t = film.transitions
     total = (t.hard_cut + t.dissolve + t.fade_in + t.fade_out) or 1
-    dims["trans.hard"]     = _norm("trans.hard",     100 * t.hard_cut / total)
+    dims["trans.hard"] = _norm("trans.hard", 100 * t.hard_cut / total)
     dims["trans.dissolve"] = _norm("trans.dissolve", 100 * t.dissolve / total)
-    dims["trans.fade"]     = _norm("trans.fade",     100 * (t.fade_in + t.fade_out) / total)
+    dims["trans.fade"] = _norm("trans.fade", 100 * (t.fade_in + t.fade_out) / total)
 
     # Audio mix
     a = (film.audio or {}).get("summary") or {}
-    dims["audio.music"]     = _norm("audio.music",     a.get("music_only_pct"))
-    dims["audio.spm"]       = _norm("audio.spm",       a.get("speech_over_music_pct"))
-    dims["audio.ambient"]   = _norm("audio.ambient",   a.get("ambient_pct"))
+    dims["audio.music"] = _norm("audio.music", a.get("music_only_pct"))
+    dims["audio.spm"] = _norm("audio.spm", a.get("speech_over_music_pct"))
+    dims["audio.ambient"] = _norm("audio.ambient", a.get("ambient_pct"))
     dims["audio.first_pct"] = _norm("audio.first_pct", a.get("first_speech_at_pct"))
 
     # Color
     c = film.color or {}
-    dims["color.lum"]      = _norm("color.lum",      c.get("mean_luminance"))
+    dims["color.lum"] = _norm("color.lum", c.get("mean_luminance"))
     dims["color.contrast"] = _norm("color.contrast", c.get("mean_contrast"))
-    dims["color.wc"]       = _norm("color.wc",       c.get("mean_warm_cool"))
-    dims["color.sat"]      = _norm("color.sat",      c.get("mean_saturation"))
+    dims["color.wc"] = _norm("color.wc", c.get("mean_warm_cool"))
+    dims["color.sat"] = _norm("color.sat", c.get("mean_saturation"))
 
     # Music
     m = film.music or {}
@@ -133,13 +133,10 @@ def cosine_similarity(a: FilmVector, b: FilmVector) -> float:
 
 def euclidean_distance(a: FilmVector, b: FilmVector) -> float:
     keys = sorted(set(a.dimensions) | set(b.dimensions))
-    return math.sqrt(
-        sum((a.dimensions.get(k, 0.0) - b.dimensions.get(k, 0.0)) ** 2 for k in keys)
-    )
+    return math.sqrt(sum((a.dimensions.get(k, 0.0) - b.dimensions.get(k, 0.0)) ** 2 for k in keys))
 
 
-def find_similar(target: FilmAnalysis, archive: list[FilmAnalysis], top_n: int = 3
-                 ) -> list[dict]:
+def find_similar(target: FilmAnalysis, archive: list[FilmAnalysis], top_n: int = 3) -> list[dict]:
     """Return top-N most similar films from the archive. Self is excluded if
     present (matched by filename)."""
     target_vec = build_vector(target)
@@ -148,18 +145,19 @@ def find_similar(target: FilmAnalysis, archive: list[FilmAnalysis], top_n: int =
         if f.film.filename == target.film.filename:
             continue
         v = build_vector(f)
-        out.append({
-            "stem": v.stem,
-            "filename": v.filename,
-            "similarity": round(cosine_similarity(target_vec, v), 4),
-            "distance": round(euclidean_distance(target_vec, v), 4),
-        })
+        out.append(
+            {
+                "stem": v.stem,
+                "filename": v.filename,
+                "similarity": round(cosine_similarity(target_vec, v), 4),
+                "distance": round(euclidean_distance(target_vec, v), 4),
+            }
+        )
     out.sort(key=lambda x: -x["similarity"])
     return out[:top_n]
 
 
-def biggest_differences(a: FilmAnalysis, b: FilmAnalysis, top_n: int = 5
-                        ) -> list[dict]:
+def biggest_differences(a: FilmAnalysis, b: FilmAnalysis, top_n: int = 5) -> list[dict]:
     """Per-dimension absolute difference, sorted descending. Useful for
     explaining why two films are NOT similar."""
     va = build_vector(a)

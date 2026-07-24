@@ -10,11 +10,12 @@ from __future__ import annotations
 from pathlib import Path
 
 DARK_THRESHOLD = 25.0  # mean luminance below which a frame is "near black"
-RAMP_MIN_FRAMES = 4    # minimum elevated-ramp run length to count as a fade
+RAMP_MIN_FRAMES = 4  # minimum elevated-ramp run length to count as a fade
 
 
 def _open(path: Path):
     import cv2  # type: ignore
+
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         raise RuntimeError(f"cannot open {path}")
@@ -23,6 +24,7 @@ def _open(path: Path):
 
 def _frame_luminance(frame, cv2) -> float:
     import numpy as np  # type: ignore
+
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     return float(np.mean(gray))
 
@@ -52,7 +54,7 @@ def detect_edges(film_path: Path, fps: float, scan_seconds: float = 2.5) -> tupl
             leading.append(_frame_luminance(frame, cv2))
         if len(leading) >= RAMP_MIN_FRAMES and leading[0] < DARK_THRESHOLD:
             # Strictly increasing over the first half (rough monotone check).
-            half = leading[:max(RAMP_MIN_FRAMES, len(leading) // 2)]
+            half = leading[: max(RAMP_MIN_FRAMES, len(leading) // 2)]
             if half[-1] > half[0] + DARK_THRESHOLD:
                 has_fade_in = True
 
@@ -66,7 +68,7 @@ def detect_edges(film_path: Path, fps: float, scan_seconds: float = 2.5) -> tupl
                     break
                 trailing.append(_frame_luminance(frame, cv2))
             if len(trailing) >= RAMP_MIN_FRAMES and trailing[-1] < DARK_THRESHOLD:
-                half = trailing[-max(RAMP_MIN_FRAMES, len(trailing) // 2):]
+                half = trailing[-max(RAMP_MIN_FRAMES, len(trailing) // 2) :]
                 if half[0] > half[-1] + DARK_THRESHOLD:
                     has_fade_out = True
     finally:

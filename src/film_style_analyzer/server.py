@@ -21,31 +21,73 @@ from http.server import SimpleHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Windows
+    fcntl = None  # type: ignore
+
+MAX_POST_BYTES = 10 * 1024 * 1024
+
 from .aggregator import aggregate
-from .config import CONFIG_PATH, Config, load as load_config
+from .config import Config, config_path
+from .config import load as load_config
 from .fcpxml_parser import parse as parse_fcpxml
 from .genre_pack import load as load_genre_pack
-from .metadata import curated_keys, merge as merge_md
+from .metadata import curated_keys
+from .metadata import merge as merge_md
+from .paths import (
+    data_root,
+    paths_for_genre,
+)
 from .schemas import FilmAnalysis
 
-DATA_ROOT = Path.home() / ".film-style-analyzer"
-
-
-def _active_genre_at_import() -> str:
-    try:
-        return getattr(load_config(), "default_genre", "wedding")
-    except Exception:
-        return "wedding"
-
-
-_GENRE_ROOT = DATA_ROOT / _active_genre_at_import()
-ANALYSES_DIR = _GENRE_ROOT / "analyses"
-THUMBS_DIR = _GENRE_ROOT / "thumbs"
-GUIDE_PATH = _GENRE_ROOT / "style-guide.md"
-STATS_PATH = _GENRE_ROOT / "aggregate-stats.json"
-EDIT_CRAFT_DIR = _GENRE_ROOT / "edit-craft"
-SHOT_PROFILE_PATH = DATA_ROOT / "shot-profile.json"
+_gp = paths_for_genre()
+ANALYSES_DIR = _gp.analyses_dir
+THUMBS_DIR = _gp.thumbs_dir
+GUIDE_PATH = _gp.guide_path
+STATS_PATH = _gp.stats_path
+EDIT_CRAFT_DIR = _gp.edit_craft_dir
+_GENRE_ROOT = _gp.root
+_ACTIVE_GENRE = _gp.genre
 STATIC_DIR = Path(__file__).parent / "static"
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    if fcntl is not None:
+        with tmp.open("r+") as fh:
+            fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+            fh.flush()
+    tmp.replace(path)
+
+
+def _validate_chapter_label(label: str | None, pack) -> str | None:
+    if label is None:
+        return None
+    normalized = str(label).strip().lower().replace(" ", "_") or None
+    if normalized and normalized not in pack.scene_labels:
+        raise ValueError(f"invalid chapter label {normalized!r}")
+    return normalized
+
+
+def _shot_profile_path() -> Path:
+    return data_root() / "shot-profile.json"
+
+
+def _set_active_paths(genre: str | None = None) -> None:
+    """Rebind module-level path constants for the requested genre workspace."""
+    global ANALYSES_DIR, THUMBS_DIR, GUIDE_PATH, STATS_PATH
+    global EDIT_CRAFT_DIR, _GENRE_ROOT, _ACTIVE_GENRE
+    gp = paths_for_genre(genre)
+    ANALYSES_DIR = gp.analyses_dir
+    THUMBS_DIR = gp.thumbs_dir
+    GUIDE_PATH = gp.guide_path
+    STATS_PATH = gp.stats_path
+    EDIT_CRAFT_DIR = gp.edit_craft_dir
+    _GENRE_ROOT = gp.root
+    _ACTIVE_GENRE = gp.genre
 
 
 # ---------- helpers ---------------------------------------------------------
@@ -182,8 +224,9 @@ def _handoff_sources() -> list[tuple[str, Path]]:
     hand-off bundle. Directories (edit-craft, analyses) are walked
     separately by _build_handoff_zip."""
     out: list[tuple[str, Path]] = []
-    if SHOT_PROFILE_PATH.is_file():
-        out.append(("shot-profile.json", SHOT_PROFILE_PATH))
+    sp = _shot_profile_path()
+    if sp.is_file():
+        out.append(("shot-profile.json", sp))
     sg = GUIDE_PATH
     if sg.is_file():
         out.append(("style-guide.md", sg))
@@ -228,13 +271,18 @@ def _handoff_manifest() -> dict:
         "files": files,
         "file_count": len(files),
         "total_bytes": total,
-        "genre": _active_genre_at_import(),
+        "genre": _ACTIVE_GENRE,
     }
 
 
-def _handoff_readme(brand: str, genre: str, profile: dict | None,
-                    stats: dict | None, film_count: int,
-                    edit_craft_files: int) -> str:
+def _handoff_readme(
+    brand: str,
+    genre: str,
+    profile: dict | None,
+    stats: dict | None,
+    film_count: int,
+    edit_craft_files: int,
+) -> str:
     """Auto-generated README addressed to a downstream LLM editor.
 
     Concrete numbers come from the live data so the bundle is
@@ -301,10 +349,7 @@ def _handoff_readme(brand: str, genre: str, profile: dict | None,
             "Output of `film-style learn-shots`. **Use to choose clips.**"
         )
     if (GUIDE_PATH).is_file():
-        bits.append(
-            "- `style-guide.md` — narrative editing manual. **Use for "
-            "editorial voice.**"
-        )
+        bits.append("- `style-guide.md` — narrative editing manual. **Use for editorial voice.**")
     if (_GENRE_ROOT / "style-profile.json").is_file():
         bits.append(
             "- `style-profile.json` — programmatic counterpart to the "
@@ -372,9 +417,10 @@ def _build_handoff_zip(brand: str) -> bytes:
     buf = io.BytesIO()
 
     profile: dict | None = None
-    if SHOT_PROFILE_PATH.is_file():
+    sp = _shot_profile_path()
+    if sp.is_file():
         try:
-            profile = json.loads(SHOT_PROFILE_PATH.read_text())
+            profile = json.loads(sp.read_text())
         except json.JSONDecodeError:
             profile = None
 
@@ -385,17 +431,11 @@ def _build_handoff_zip(brand: str) -> bytes:
         except json.JSONDecodeError:
             stats = None
 
-    film_count = (
-        len(list(ANALYSES_DIR.glob("*.json")))
-        if ANALYSES_DIR.is_dir()
-        else 0
-    )
+    film_count = len(list(ANALYSES_DIR.glob("*.json"))) if ANALYSES_DIR.is_dir() else 0
     edit_craft_files = (
-        sum(1 for p in EDIT_CRAFT_DIR.rglob("*") if p.is_file())
-        if EDIT_CRAFT_DIR.is_dir()
-        else 0
+        sum(1 for p in EDIT_CRAFT_DIR.rglob("*") if p.is_file()) if EDIT_CRAFT_DIR.is_dir() else 0
     )
-    genre = _active_genre_at_import()
+    genre = _ACTIVE_GENRE
 
     readme = _handoff_readme(
         brand=brand,
@@ -459,8 +499,12 @@ def _make_handler():
             self.end_headers()
             self.wfile.write(data)
 
-        def _send_text(self, body: str, status: int = HTTPStatus.OK,
-                       content_type: str = "text/plain; charset=utf-8") -> None:
+        def _send_text(
+            self,
+            body: str,
+            status: int = HTTPStatus.OK,
+            content_type: str = "text/plain; charset=utf-8",
+        ) -> None:
             data = body.encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", content_type)
@@ -492,7 +536,7 @@ def _make_handler():
                 return self._send_json({"films": films})
 
             if path.startswith("/api/films/"):
-                stem = path[len("/api/films/"):].strip("/")
+                stem = path[len("/api/films/") :].strip("/")
                 if not _slug_safe(stem):
                     return self.send_error(HTTPStatus.BAD_REQUEST)
                 p = ANALYSES_DIR / f"{stem}.json"
@@ -517,24 +561,17 @@ def _make_handler():
                         {"exists": False, "markdown": ""},
                         status=HTTPStatus.OK,
                     )
-                return self._send_json(
-                    {"exists": True, "markdown": GUIDE_PATH.read_text()}
-                )
+                return self._send_json({"exists": True, "markdown": GUIDE_PATH.read_text()})
 
             if path == "/api/shot-profile":
-                if not SHOT_PROFILE_PATH.is_file():
-                    return self._send_json(
-                        {"exists": False, "path": str(SHOT_PROFILE_PATH),
-                         "profile": None}
-                    )
+                sp = _shot_profile_path()
+                if not sp.is_file():
+                    return self._send_json({"exists": False, "path": str(sp), "profile": None})
                 try:
-                    profile = json.loads(SHOT_PROFILE_PATH.read_text())
+                    profile = json.loads(sp.read_text())
                 except (OSError, json.JSONDecodeError):
                     return self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR)
-                return self._send_json(
-                    {"exists": True, "path": str(SHOT_PROFILE_PATH),
-                     "profile": profile}
-                )
+                return self._send_json({"exists": True, "path": str(sp), "profile": profile})
 
             if path == "/api/handoff":
                 return self._send_json(_handoff_manifest())
@@ -582,7 +619,7 @@ def _make_handler():
                 return
 
             if path.startswith("/api/edit-craft/"):
-                rel = path[len("/api/edit-craft/"):]
+                rel = path[len("/api/edit-craft/") :]
                 target = _resolve_under(EDIT_CRAFT_DIR, rel)
                 if target is None:
                     return self.send_error(HTTPStatus.FORBIDDEN)
@@ -606,7 +643,13 @@ def _make_handler():
 
             if path == "/api/config":
                 cfg = load_config()
-                return self._send_json(asdict(cfg))
+                pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
+                payload = {
+                    **asdict(cfg),
+                    "active_genre": _ACTIVE_GENRE,
+                    "genre_display_name": pack.display_name,
+                }
+                return self._send_json(payload)
 
             if path == "/api/metadata-keys":
                 # Returns the curated key→[allowed values] dict for dropdowns.
@@ -615,20 +658,21 @@ def _make_handler():
                 return self._send_json(curated_keys(pack))
 
             if path.startswith("/api/match/"):
-                stem = path[len("/api/match/"):].strip("/")
+                stem = path[len("/api/match/") :].strip("/")
                 if not _slug_safe(stem):
                     return self.send_error(HTTPStatus.BAD_REQUEST)
                 p = ANALYSES_DIR / f"{stem}.json"
                 if not p.is_file():
                     return self.send_error(HTTPStatus.NOT_FOUND)
                 from .matchmaker import find_similar
+
                 target = FilmAnalysis.model_validate_json(p.read_text())
                 archive = _load_films()
                 matches = find_similar(target, archive, top_n=4)
                 return self._send_json({"target": stem, "matches": matches})
 
             if path.startswith("/thumbs/"):
-                rel = path[len("/thumbs/"):]
+                rel = path[len("/thumbs/") :]
                 # Defend against traversal.
                 target = (THUMBS_DIR / rel).resolve()
                 try:
@@ -656,6 +700,8 @@ def _make_handler():
             parsed = urlparse(self.path)
             path = unquote(parsed.path)
             length = int(self.headers.get("Content-Length") or 0)
+            if length > MAX_POST_BYTES:
+                return self.send_error(HTTPStatus.REQUEST_ENTITY_TOO_LARGE, "body too large")
             body = self.rfile.read(length) if length else b""
 
             if path == "/api/compare":
@@ -670,7 +716,7 @@ def _make_handler():
                     cut = parse_fcpxml(tmp_path)
                 except Exception as e:
                     return self._send_json(
-                        {"error": f"could not parse FCPXML: {e}"},
+                        {"error": "could not parse FCPXML"},
                         status=HTTPStatus.BAD_REQUEST,
                     )
                 finally:
@@ -692,16 +738,18 @@ def _make_handler():
                 # Validate: only known keys, correct primitive types.
                 cfg = load_config()
                 merged = asdict(cfg) | {
-                    k: v for k, v in payload.items()
-                    if k in Config.__dataclass_fields__
+                    k: v for k, v in payload.items() if k in Config.__dataclass_fields__
                 }
-                CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-                CONFIG_PATH.write_text(json.dumps(merged, indent=2))
+                if merged.get("claude_backend") not in (None, "api", "cli"):
+                    return self.send_error(HTTPStatus.BAD_REQUEST, "invalid claude_backend")
+                cp = config_path()
+                cp.parent.mkdir(parents=True, exist_ok=True)
+                _atomic_write_text(cp, json.dumps(merged, indent=2))
                 return self._send_json(merged)
 
             # POST /api/films/<stem>/metadata  → merge metadata
             if path.startswith("/api/films/") and path.endswith("/metadata"):
-                stem = path[len("/api/films/"):-len("/metadata")].strip("/")
+                stem = path[len("/api/films/") : -len("/metadata")].strip("/")
                 if not _slug_safe(stem):
                     return self.send_error(HTTPStatus.BAD_REQUEST)
                 p = ANALYSES_DIR / f"{stem}.json"
@@ -713,13 +761,11 @@ def _make_handler():
                     return self.send_error(HTTPStatus.BAD_REQUEST, "invalid JSON")
                 analysis = FilmAnalysis.model_validate_json(p.read_text())
                 analysis.metadata = merge_md(analysis.metadata, payload)
-                p.write_text(analysis.model_dump_json(indent=2))
+                _atomic_write_text(p, analysis.model_dump_json(indent=2))
                 return self._send_json(analysis.metadata)
 
             # POST /api/films/<stem>/chapters/<index>  → set label
-            chapter_match = re.match(
-                r"^/api/films/([^/]+)/chapters/(\d+)$", path
-            )
+            chapter_match = re.match(r"^/api/films/([^/]+)/chapters/(\d+)$", path)
             if chapter_match:
                 stem, idx_str = chapter_match.group(1), chapter_match.group(2)
                 if not _slug_safe(stem):
@@ -736,14 +782,19 @@ def _make_handler():
                 if idx < 0 or idx >= len(analysis.chapters):
                     return self.send_error(HTTPStatus.NOT_FOUND, "chapter out of range")
                 new_label = payload.get("label")
-                if new_label is not None:
-                    new_label = str(new_label).strip().lower().replace(" ", "_") or None
-                analysis.chapters[idx].label = new_label
-                p.write_text(analysis.model_dump_json(indent=2))
-                return self._send_json({
-                    "index": idx,
-                    "label": analysis.chapters[idx].label,
-                })
+                cfg = load_config()
+                pack = load_genre_pack(getattr(cfg, "default_genre", "wedding"))
+                try:
+                    analysis.chapters[idx].label = _validate_chapter_label(new_label, pack)
+                except ValueError:
+                    return self.send_error(HTTPStatus.BAD_REQUEST, "invalid chapter label")
+                _atomic_write_text(p, analysis.model_dump_json(indent=2))
+                return self._send_json(
+                    {
+                        "index": idx,
+                        "label": analysis.chapters[idx].label,
+                    }
+                )
 
             return self.send_error(HTTPStatus.NOT_FOUND)
 
@@ -770,27 +821,25 @@ def _build_compare_report(cut: dict, profile: dict) -> dict:
     if durations:
         n = len(durations)
         for i in range(10):
-            slc = durations[i * n // 10:(i + 1) * n // 10]
+            slc = durations[i * n // 10 : (i + 1) * n // 10]
             actual_deciles.append(round(sum(slc) / max(1, len(slc)), 3) if slc else 0.0)
 
     pacing_diff = []
     for i, (a, e) in enumerate(zip(actual_deciles, expected_deciles)):
         delta_pct = ((a - e) / e * 100) if e else 0
-        pacing_diff.append({
-            "decile": i,
-            "actual": a,
-            "expected": e,
-            "delta_pct": round(delta_pct, 1),
-        })
+        pacing_diff.append(
+            {
+                "decile": i,
+                "actual": a,
+                "expected": e,
+                "delta_pct": round(delta_pct, 1),
+            }
+        )
 
     delta_clips = (
-        (cut["clip_count"] - expected_clips) / expected_clips * 100
-        if expected_clips else 0
+        (cut["clip_count"] - expected_clips) / expected_clips * 100 if expected_clips else 0
     )
-    delta_pace = (
-        (cut["avg_clip_sec"] - expected_avg) / expected_avg * 100
-        if expected_avg else 0
-    )
+    delta_pace = (cut["avg_clip_sec"] - expected_avg) / expected_avg * 100 if expected_avg else 0
 
     suggestions: list[str] = []
     if abs(delta_pace) > 15:
@@ -805,14 +854,14 @@ def _build_compare_report(cut: dict, profile: dict) -> dict:
         if abs(d["delta_pct"]) > 25 and d["expected"]:
             verb = "tighten" if d["delta_pct"] > 0 else "lengthen"
             suggestions.append(
-                f"At {d['decile']*10}-{(d['decile']+1)*10}% — {verb} "
+                f"At {d['decile'] * 10}-{(d['decile'] + 1) * 10}% — {verb} "
                 f"({d['actual']:.2f}s → {d['expected']:.2f}s)."
             )
 
     duration_in_range = (
-        pdur.get("min_sec") is not None and
-        pdur.get("max_sec") is not None and
-        pdur["min_sec"] <= cut["total_duration_sec"] <= pdur["max_sec"]
+        pdur.get("min_sec") is not None
+        and pdur.get("max_sec") is not None
+        and pdur["min_sec"] <= cut["total_duration_sec"] <= pdur["max_sec"]
     )
 
     return {
@@ -843,8 +892,11 @@ class _ThreadingServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
     allow_reuse_address = True
 
 
-def serve(host: str = "127.0.0.1", port: int = 7421, open_browser: bool = True) -> None:
+def serve(
+    host: str = "127.0.0.1", port: int = 7421, open_browser: bool = True, genre: str | None = None
+) -> None:
     """Start the dashboard server. Blocks until Ctrl-C."""
+    _set_active_paths(genre)
     handler = _make_handler()
     with _ThreadingServer((host, port), handler) as httpd:
         url = f"http://{host}:{port}"

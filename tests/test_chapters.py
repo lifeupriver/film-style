@@ -3,8 +3,14 @@ from film_style_analyzer.schemas import Clip
 
 
 def _clip(i: int, start: float, end: float, t_out: str = "hard_cut") -> Clip:
-    return Clip(index=i, start_sec=start, end_sec=end, duration_sec=end - start,
-                transition_in="hard_cut" if i > 0 else "fade_in", transition_out=t_out)
+    return Clip(
+        index=i,
+        start_sec=start,
+        end_sec=end,
+        duration_sec=end - start,
+        transition_in="hard_cut" if i > 0 else "fade_in",
+        transition_out=t_out,
+    )
 
 
 def test_group_splits_on_dissolve():

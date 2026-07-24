@@ -21,8 +21,17 @@ from .genre_pack import GenrePack
 # so the matchmaker (and similar consumers) can rely on it as a stable
 # feature-vector dimension set.
 SHOT_LABELS = [
-    "extreme_wide", "wide", "medium_wide", "medium", "medium_close",
-    "close_up", "extreme_close", "insert", "over_shoulder", "aerial", "other",
+    "extreme_wide",
+    "wide",
+    "medium_wide",
+    "medium",
+    "medium_close",
+    "close_up",
+    "extreme_close",
+    "insert",
+    "over_shoulder",
+    "aerial",
+    "other",
 ]
 
 
@@ -74,7 +83,7 @@ def classify_shots(
     out: list[str] = []
 
     for start in range(0, len(thumbnail_paths), batch_size):
-        batch = thumbnail_paths[start:start + batch_size]
+        batch = thumbnail_paths[start : start + batch_size]
         content: list[dict] = []
         for i, p in enumerate(batch, 1):
             content.append({"type": "text", "text": f"Image {i}:"})
@@ -95,7 +104,7 @@ def classify_shots(
 
         text = "".join(b.text for b in msg.content if hasattr(b, "text"))
         try:
-            payload = json.loads(text[text.find("{"):text.rfind("}") + 1])
+            payload = json.loads(text[text.find("{") : text.rfind("}") + 1])
             labels = payload.get("labels") or []
         except (json.JSONDecodeError, ValueError):
             labels = []

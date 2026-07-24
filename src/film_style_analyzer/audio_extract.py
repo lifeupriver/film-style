@@ -13,12 +13,19 @@ class AudioExtractError(RuntimeError):
 def extract_wav(film_path: Path, out_path: Path) -> Path:
     out_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
-        "ffmpeg", "-y", "-loglevel", "error",
-        "-i", str(film_path),
+        "ffmpeg",
+        "-y",
+        "-loglevel",
+        "error",
+        "-i",
+        str(film_path),
         "-vn",
-        "-acodec", "pcm_s16le",
-        "-ar", "16000",
-        "-ac", "1",
+        "-acodec",
+        "pcm_s16le",
+        "-ar",
+        "16000",
+        "-ac",
+        "1",
         str(out_path),
     ]
     try:

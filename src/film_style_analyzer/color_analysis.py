@@ -16,11 +16,11 @@ from pathlib import Path
 
 @dataclass
 class ClipColor:
-    palette: list[dict]           # [{"hex": "#aabbcc", "weight": 0.42}, ...]
-    mean_luminance: float         # 0–255
-    luminance_std: float          # 0–255
-    warm_cool: float              # -1 (cool) to +1 (warm)
-    saturation: float             # 0–255
+    palette: list[dict]  # [{"hex": "#aabbcc", "weight": 0.42}, ...]
+    mean_luminance: float  # 0–255
+    luminance_std: float  # 0–255
+    warm_cool: float  # -1 (cool) to +1 (warm)
+    saturation: float  # 0–255
 
 
 def _to_hex(b: int, g: int, r: int) -> str:
@@ -35,8 +35,11 @@ def _kmeans_palette(frame_bgr, k: int, sample_max: int = 8000):
     h, w = frame_bgr.shape[:2]
     if h * w > sample_max:
         scale = (sample_max / (h * w)) ** 0.5
-        small = cv2.resize(frame_bgr, (max(1, int(w * scale)), max(1, int(h * scale))),
-                           interpolation=cv2.INTER_AREA)
+        small = cv2.resize(
+            frame_bgr,
+            (max(1, int(w * scale)), max(1, int(h * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
     else:
         small = frame_bgr
     pixels = small.reshape(-1, 3).astype(np.float32)
@@ -45,9 +48,7 @@ def _kmeans_palette(frame_bgr, k: int, sample_max: int = 8000):
     k = max(1, min(k, max(1, pixels.shape[0] // 4)))
 
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 12, 1.0)
-    _, labels, centers = cv2.kmeans(
-        pixels, k, None, criteria, 3, cv2.KMEANS_PP_CENTERS
-    )
+    _, labels, centers = cv2.kmeans(pixels, k, None, criteria, 3, cv2.KMEANS_PP_CENTERS)
     centers = centers.astype(int)
     counts = np.bincount(labels.flatten(), minlength=k)
     total = counts.sum() or 1
@@ -55,10 +56,12 @@ def _kmeans_palette(frame_bgr, k: int, sample_max: int = 8000):
     out = []
     for i in range(k):
         b, g, r = centers[i]
-        out.append({
-            "hex": _to_hex(int(b), int(g), int(r)),
-            "weight": round(float(counts[i]) / float(total), 4),
-        })
+        out.append(
+            {
+                "hex": _to_hex(int(b), int(g), int(r)),
+                "weight": round(float(counts[i]) / float(total), 4),
+            }
+        )
     out.sort(key=lambda x: -x["weight"])
     return out
 
@@ -66,7 +69,12 @@ def _kmeans_palette(frame_bgr, k: int, sample_max: int = 8000):
 def _warm_cool_index(frame_bgr) -> float:
     """+1 = pure warm, -1 = pure cool, 0 = neutral. Mean (R-B) over saturated pixels."""
     import numpy as np  # type: ignore
-    b, g, r = frame_bgr[..., 0].astype("int16"), frame_bgr[..., 1].astype("int16"), frame_bgr[..., 2].astype("int16")
+
+    b, g, r = (
+        frame_bgr[..., 0].astype("int16"),
+        frame_bgr[..., 1].astype("int16"),
+        frame_bgr[..., 2].astype("int16"),
+    )
     diff = r - b
     # Normalize by typical max range (~255). Clip to [-1, 1].
     return float(np.clip(diff.mean() / 128.0, -1.0, 1.0))
@@ -75,6 +83,7 @@ def _warm_cool_index(frame_bgr) -> float:
 def _seek_frame(path: Path, sec: float):
     """Read a single frame at `sec` seconds. Returns BGR np array or None."""
     import cv2  # type: ignore
+
     cap = cv2.VideoCapture(str(path))
     if not cap.isOpened():
         return None
@@ -86,12 +95,13 @@ def _seek_frame(path: Path, sec: float):
         cap.release()
 
 
-def analyze_clip(film_path: Path, clip_start_sec: float, clip_duration_sec: float,
-                 k: int = 5) -> ClipColor | None:
+def analyze_clip(
+    film_path: Path, clip_start_sec: float, clip_duration_sec: float, k: int = 5
+) -> ClipColor | None:
     """Analyze one clip. Samples the middle of the clip (avoids cut artifacts)."""
     try:
         import cv2  # type: ignore
-        import numpy as np  # type: ignore
+        import numpy as np  # type: ignore  # noqa: F401
     except ImportError:
         return None
 

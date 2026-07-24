@@ -2,7 +2,6 @@
 
 import json
 from datetime import datetime, timezone
-from pathlib import Path
 
 import pytest
 
@@ -13,55 +12,114 @@ def fixture_home(tmp_path, monkeypatch):
     new DATA_ROOT."""
     monkeypatch.setenv("HOME", str(tmp_path))
     import importlib
+
     from film_style_analyzer import mcp_server
+
     importlib.reload(mcp_server)
     mcp_server.ANALYSES_DIR.mkdir(parents=True, exist_ok=True)
     return tmp_path, mcp_server
 
 
-def _write_analysis(mcp_server, stem, *, dur=120.0, avg=3.0, music_pct=70.0,
-                    chapters=None, color=None, music=None, metadata=None):
+def _write_analysis(
+    mcp_server,
+    stem,
+    *,
+    dur=120.0,
+    avg=3.0,
+    music_pct=70.0,
+    chapters=None,
+    color=None,
+    music=None,
+    metadata=None,
+):
     n = max(1, int(dur / avg))
     payload = {
         "version": "1.0",
         "analyzed_at": datetime.now(timezone.utc).isoformat(),
         "analyzer_version": "test",
-        "film": {"filename": f"{stem}.mp4", "path": f"/tmp/{stem}.mp4",
-                 "duration_sec": dur, "resolution": "1920x1080",
-                 "frame_rate": 24.0, "codec": "h264"},
-        "cuts": {"total": n, "timestamps_sec": [i * avg for i in range(n)],
-                 "clips": [{"index": i, "start_sec": i*avg, "end_sec": (i+1)*avg,
-                            "duration_sec": avg,
-                            "transition_in": "hard_cut" if i else "fade_in",
-                            "transition_out": "hard_cut"} for i in range(n)]},
-        "pacing": {"avg_clip_duration_sec": avg, "median_clip_duration_sec": avg,
-                   "std_dev_sec": 0.5, "min_clip_sec": avg, "max_clip_sec": avg,
-                   "clip_duration_histogram": {}, "pacing_curve_by_quartile": {},
-                   "pacing_curve_by_decile": [avg] * 10},
-        "transitions": {"hard_cut": n - 1, "dissolve": 0, "fade_in": 1,
-                        "fade_out": 1, "dissolve_positions_pct": [],
-                        "avg_dissolve_duration_sec": 0.0},
-        "chapters": chapters or [
-            {"index": 0, "start_clip": 0, "end_clip": n - 1,
-             "start_sec": 0, "end_sec": dur, "duration_sec": dur,
-             "clip_count": n, "avg_clip_sec": avg,
-             "representative_thumbnail": None, "label": None},
+        "film": {
+            "filename": f"{stem}.mp4",
+            "path": f"/tmp/{stem}.mp4",
+            "duration_sec": dur,
+            "resolution": "1920x1080",
+            "frame_rate": 24.0,
+            "codec": "h264",
+        },
+        "cuts": {
+            "total": n,
+            "timestamps_sec": [i * avg for i in range(n)],
+            "clips": [
+                {
+                    "index": i,
+                    "start_sec": i * avg,
+                    "end_sec": (i + 1) * avg,
+                    "duration_sec": avg,
+                    "transition_in": "hard_cut" if i else "fade_in",
+                    "transition_out": "hard_cut",
+                }
+                for i in range(n)
+            ],
+        },
+        "pacing": {
+            "avg_clip_duration_sec": avg,
+            "median_clip_duration_sec": avg,
+            "std_dev_sec": 0.5,
+            "min_clip_sec": avg,
+            "max_clip_sec": avg,
+            "clip_duration_histogram": {},
+            "pacing_curve_by_quartile": {},
+            "pacing_curve_by_decile": [avg] * 10,
+        },
+        "transitions": {
+            "hard_cut": n - 1,
+            "dissolve": 0,
+            "fade_in": 1,
+            "fade_out": 1,
+            "dissolve_positions_pct": [],
+            "avg_dissolve_duration_sec": 0.0,
+        },
+        "chapters": chapters
+        or [
+            {
+                "index": 0,
+                "start_clip": 0,
+                "end_clip": n - 1,
+                "start_sec": 0,
+                "end_sec": dur,
+                "duration_sec": dur,
+                "clip_count": n,
+                "avg_clip_sec": avg,
+                "representative_thumbnail": None,
+                "label": None,
+            },
         ],
         "structure": {
             "opening": {"first_cut_at_sec": avg, "first_5_clips_avg_duration_sec": avg},
-            "closing": {"last_cut_at_sec": dur, "last_5_clips_avg_duration_sec": avg,
-                        "fade_to_black": True, "fade_duration_sec": 2.0},
+            "closing": {
+                "last_cut_at_sec": dur,
+                "last_5_clips_avg_duration_sec": avg,
+                "fade_to_black": True,
+                "fade_duration_sec": 2.0,
+            },
         },
-        "audio": {"summary": {"music_only_pct": music_pct,
-                              "speech_over_music_pct": 25.0,
-                              "ambient_pct": 5.0, "first_speech_at_pct": 16.0,
-                              "music_only_sec": 70, "speech_over_music_sec": 25,
-                              "speech_only_sec": 0, "ambient_sec": 5,
-                              "first_speech_at_sec": 19.2,
-                              "speech_segment_count": 1,
-                              "avg_speech_segment_sec": 25,
-                              "longest_speech_segment_sec": 25,
-                              "total_speech_duration_sec": 25}, "segments": []},
+        "audio": {
+            "summary": {
+                "music_only_pct": music_pct,
+                "speech_over_music_pct": 25.0,
+                "ambient_pct": 5.0,
+                "first_speech_at_pct": 16.0,
+                "music_only_sec": 70,
+                "speech_over_music_sec": 25,
+                "speech_only_sec": 0,
+                "ambient_sec": 5,
+                "first_speech_at_sec": 19.2,
+                "speech_segment_count": 1,
+                "avg_speech_segment_sec": 25,
+                "longest_speech_segment_sec": 25,
+                "total_speech_duration_sec": 25,
+            },
+            "segments": [],
+        },
         "color": color,
         "music": music,
         "metadata": metadata or {},
@@ -117,8 +175,7 @@ def test_get_style_profile_reads_file(fixture_home):
 def test_set_film_metadata_persists(fixture_home):
     _, mcp_server = fixture_home
     _write_analysis(mcp_server, "demo-a")
-    out = mcp_server.tool_set_film_metadata("demo-a", {"venue": "outdoor",
-                                                         "season": "summer"})
+    out = mcp_server.tool_set_film_metadata("demo-a", {"venue": "outdoor", "season": "summer"})
     assert out["metadata"] == {"venue": "outdoor", "season": "summer"}
     # Reload and confirm.
     out2 = mcp_server.tool_get_film("demo-a")
@@ -141,11 +198,24 @@ def test_set_chapter_label_persists(fixture_home):
 
 def test_set_chapter_label_clears(fixture_home):
     _, mcp_server = fixture_home
-    _write_analysis(mcp_server, "demo-a", chapters=[{
-        "index": 0, "start_clip": 0, "end_clip": 0, "start_sec": 0, "end_sec": 10,
-        "duration_sec": 10, "clip_count": 1, "avg_clip_sec": 10,
-        "representative_thumbnail": None, "label": "ceremony",
-    }])
+    _write_analysis(
+        mcp_server,
+        "demo-a",
+        chapters=[
+            {
+                "index": 0,
+                "start_clip": 0,
+                "end_clip": 0,
+                "start_sec": 0,
+                "end_sec": 10,
+                "duration_sec": 10,
+                "clip_count": 1,
+                "avg_clip_sec": 10,
+                "representative_thumbnail": None,
+                "label": "ceremony",
+            }
+        ],
+    )
     out = mcp_server.tool_set_chapter_label("demo-a", 0, None)
     assert out["label"] is None
 

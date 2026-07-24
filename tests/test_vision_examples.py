@@ -6,13 +6,13 @@ from film_style_analyzer.vision_classify import _pick_diverse_examples, gather_e
 
 
 def test_pick_diverse_examples_round_robin():
-    examples = [
-        (Path(f"/a{i}.jpg"), "ceremony") for i in range(5)
-    ] + [
-        (Path(f"/b{i}.jpg"), "dancing") for i in range(5)
-    ] + [
-        (Path("/c.jpg"), "first_dance"),
-    ]
+    examples = (
+        [(Path(f"/a{i}.jpg"), "ceremony") for i in range(5)]
+        + [(Path(f"/b{i}.jpg"), "dancing") for i in range(5)]
+        + [
+            (Path("/c.jpg"), "first_dance"),
+        ]
+    )
     chosen = _pick_diverse_examples(examples, max_examples=4)
     labels = {label for _, label in chosen}
     # Round-robin should hit all 3 labels before doubling up on any.
@@ -32,13 +32,18 @@ def test_gather_examples_walks_analyses(tmp_path: Path):
     data_root = tmp_path
 
     import json as _json
-    (analyses / "a.json").write_text(_json.dumps({
-        "chapters": [
-            {"label": "ceremony", "representative_thumbnail": "thumbs/a/clip_001.jpg"},
-            {"label": None, "representative_thumbnail": "thumbs/a/clip_002.jpg"},
-            {"label": "dancing", "representative_thumbnail": "thumbs/a/clip_003.jpg"},
-        ],
-    }))
+
+    (analyses / "a.json").write_text(
+        _json.dumps(
+            {
+                "chapters": [
+                    {"label": "ceremony", "representative_thumbnail": "thumbs/a/clip_001.jpg"},
+                    {"label": None, "representative_thumbnail": "thumbs/a/clip_002.jpg"},
+                    {"label": "dancing", "representative_thumbnail": "thumbs/a/clip_003.jpg"},
+                ],
+            }
+        )
+    )
 
     out = gather_existing_examples(analyses, data_root)
     # Two labeled chapters, one with no label, one with no thumb. → 2 results.

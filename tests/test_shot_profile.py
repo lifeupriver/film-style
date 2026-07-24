@@ -3,12 +3,24 @@
 from film_style_analyzer.shot_profile import aggregate_frames, learn_from_thumbnails
 
 
-def _frame(framing="medium", faces=1, face_size=8.0,
-           face_x=0.33, face_y=0.4, headroom=10.0,
-           thirds=0.7, brightness=0.5, lap=150.0,
-           sep=2.5, exposure="good", focus="sharp",
-           head_cutoff=False, facing=True,
-           dominant_emotion="happy", emotion_score=45.0):
+def _frame(
+    framing="medium",
+    faces=1,
+    face_size=8.0,
+    face_x=0.33,
+    face_y=0.4,
+    headroom=10.0,
+    thirds=0.7,
+    brightness=0.5,
+    lap=150.0,
+    sep=2.5,
+    exposure="good",
+    focus="sharp",
+    head_cutoff=False,
+    facing=True,
+    dominant_emotion="happy",
+    emotion_score=45.0,
+):
     return {
         "framing": framing,
         "faces_detected": faces,
@@ -71,15 +83,16 @@ class TestAggregate:
         assert result["rejection_rules_learned"]["head_cutoff_pct"] == 20.0
 
     def test_avg_brightness_in_range(self):
-        frames = [_frame(brightness=0.30), _frame(brightness=0.50),
-                  _frame(brightness=0.70)]
+        frames = [_frame(brightness=0.30), _frame(brightness=0.50), _frame(brightness=0.70)]
         result = aggregate_frames(frames)
         assert 0.45 <= result["exposure"]["avg_brightness"] <= 0.55
 
     def test_emotion_distribution(self):
-        frames = [_frame(dominant_emotion="happy")] * 5 + [
-            _frame(dominant_emotion="surprise")] * 3 + [
-            _frame(dominant_emotion="neutral")] * 2
+        frames = (
+            [_frame(dominant_emotion="happy")] * 5
+            + [_frame(dominant_emotion="surprise")] * 3
+            + [_frame(dominant_emotion="neutral")] * 2
+        )
         result = aggregate_frames(frames)
         dist = result["emotion_preferences"]["dominant_emotions_distribution"]
         assert dist["happy"] == 0.5
@@ -102,8 +115,7 @@ class TestLearnFromThumbnails:
             return _frame()
 
         def fake_emotion(p):
-            return {"dominant_emotion": "happy", "wedding_emotion_score": 50,
-                    "faces_analyzed": 1}
+            return {"dominant_emotion": "happy", "wedding_emotion_score": 50, "faces_analyzed": 1}
 
         result = learn_from_thumbnails(
             tmp_path,
@@ -125,14 +137,17 @@ class TestLearnFromThumbnails:
             tmp_path,
             films=["film2"],
             analyze_frame_fn=lambda p: _frame(),
-            analyze_emotion_fn=lambda p: {"faces_analyzed": 0,
-                                           "wedding_emotion_score": 0,
-                                           "dominant_emotion": "none"},
+            analyze_emotion_fn=lambda p: {
+                "faces_analyzed": 0,
+                "wedding_emotion_score": 0,
+                "dominant_emotion": "none",
+            },
         )
         assert result["films_analyzed"] == 1
         assert result["total_frames_analyzed"] == 2
 
     def test_missing_thumbs_dir_raises(self, tmp_path):
         import pytest
+
         with pytest.raises(FileNotFoundError):
             learn_from_thumbnails(tmp_path / "does_not_exist")

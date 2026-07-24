@@ -7,33 +7,66 @@ from datetime import datetime, timezone
 from film_style_analyzer import genre_pack
 from film_style_analyzer.profile_writer import build_profile
 from film_style_analyzer.schemas import (
-    Clip, Cuts, FilmAnalysis, FilmMeta, Pacing, Structure, Transitions,
+    Clip,
+    Cuts,
+    FilmAnalysis,
+    FilmMeta,
+    Pacing,
+    Structure,
+    Transitions,
 )
 
 
 def _mk_minimal_film(filename="a.mp4"):
     clips = [
-        Clip(index=0, start_sec=0, end_sec=3, duration_sec=3,
-             transition_in="fade_in", transition_out="hard_cut"),
-        Clip(index=1, start_sec=3, end_sec=6, duration_sec=3,
-             transition_in="hard_cut", transition_out="hard_cut"),
+        Clip(
+            index=0,
+            start_sec=0,
+            end_sec=3,
+            duration_sec=3,
+            transition_in="fade_in",
+            transition_out="hard_cut",
+        ),
+        Clip(
+            index=1,
+            start_sec=3,
+            end_sec=6,
+            duration_sec=3,
+            transition_in="hard_cut",
+            transition_out="hard_cut",
+        ),
     ]
     return FilmAnalysis(
         analyzed_at=datetime.now(timezone.utc),
         analyzer_version="test",
-        film=FilmMeta(filename=filename, path=f"/tmp/{filename}",
-                      duration_sec=6, resolution="1920x1080",
-                      frame_rate=24.0, codec="h264"),
+        film=FilmMeta(
+            filename=filename,
+            path=f"/tmp/{filename}",
+            duration_sec=6,
+            resolution="1920x1080",
+            frame_rate=24.0,
+            codec="h264",
+        ),
         cuts=Cuts(total=2, timestamps_sec=[0, 3], clips=clips),
-        pacing=Pacing(avg_clip_duration_sec=3.0, median_clip_duration_sec=3.0,
-                      std_dev_sec=0.0, min_clip_sec=3.0, max_clip_sec=3.0,
-                      clip_duration_histogram={}, pacing_curve_by_quartile={},
-                      pacing_curve_by_decile=[3.0] * 10),
+        pacing=Pacing(
+            avg_clip_duration_sec=3.0,
+            median_clip_duration_sec=3.0,
+            std_dev_sec=0.0,
+            min_clip_sec=3.0,
+            max_clip_sec=3.0,
+            clip_duration_histogram={},
+            pacing_curve_by_quartile={},
+            pacing_curve_by_decile=[3.0] * 10,
+        ),
         transitions=Transitions(hard_cut=2, fade_in=1),
         structure=Structure(
             opening={"first_cut_at_sec": 3.0, "first_5_clips_avg_duration_sec": 3.0},
-            closing={"last_cut_at_sec": 6.0, "last_5_clips_avg_duration_sec": 3.0,
-                     "fade_to_black": False, "fade_duration_sec": 0.0},
+            closing={
+                "last_cut_at_sec": 6.0,
+                "last_5_clips_avg_duration_sec": 3.0,
+                "fade_to_black": False,
+                "fade_duration_sec": 0.0,
+            },
         ),
     )
 
@@ -55,13 +88,16 @@ def test_profile_includes_genre_extensions_key():
 import pytest
 
 
-@pytest.mark.parametrize("genre,emphasis", [
-    ("commercial", "voiceover_first"),
-    ("brand_content", "interview"),
-    ("social_short", "hook_driven"),
-    ("music_video", "beat_locked"),
-    ("documentary", "interview"),
-])
+@pytest.mark.parametrize(
+    "genre,emphasis",
+    [
+        ("commercial", "voiceover_first"),
+        ("brand_content", "interview"),
+        ("social_short", "hook_driven"),
+        ("music_video", "beat_locked"),
+        ("documentary", "interview"),
+    ],
+)
 def test_each_genre_emits_appropriate_audio_rule(genre, emphasis):
     pack = genre_pack.load(genre)
     assert pack.audio_emphasis == emphasis

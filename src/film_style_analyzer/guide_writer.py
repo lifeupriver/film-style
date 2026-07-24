@@ -33,6 +33,7 @@ def write_guide(
 
     if backend == "cli":
         from .claude_cli import complete as claude_cli_complete
+
         return claude_cli_complete(prompt=user, system=system, max_turns=1)
 
     # Default: API backend.
@@ -40,7 +41,7 @@ def write_guide(
     if not api_key:
         raise RuntimeError(
             "ANTHROPIC_API_KEY is not set. Either export it, or set "
-            "claude_backend=\"cli\" in ~/.film-style-analyzer/config.json "
+            'claude_backend="cli" in ~/.film-style-analyzer/config.json '
             "to route through your Claude Pro/Max subscription via the local "
             "`claude` CLI."
         )

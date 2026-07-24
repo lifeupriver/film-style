@@ -16,13 +16,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from scenedetect import ContentDetector, open_video, SceneManager
+from scenedetect import ContentDetector, SceneManager, open_video
 
 from .fade_detect import detect_edges
 from .schemas import Clip
 
 DEFAULT_CONTENT_THRESHOLD = 8.0  # tuned for wedding-film soft cuts
-HARD_CUT_THRESHOLD = 22.0        # secondary pass — only the strongest cuts
+HARD_CUT_THRESHOLD = 22.0  # secondary pass — only the strongest cuts
 
 
 def _detect_scenes(path: Path, detector, min_scene_len_frames: int) -> list[tuple[float, float]]:
@@ -59,23 +59,29 @@ def detect_clips(
     if not primary:
         # No cuts detected — single clip.
         from .media_probe import probe
+
         meta = probe(path)
         try:
             has_fade_in, has_fade_out = detect_edges(path, fps=meta.frame_rate)
         except Exception:
             has_fade_in, has_fade_out = False, False
-        return [Clip(
-            index=0, start_sec=0.0, end_sec=meta.duration_sec,
-            duration_sec=meta.duration_sec,
-            transition_in="fade_in" if has_fade_in else "hard_cut",
-            transition_out="fade_out" if has_fade_out else "hard_cut",
-        )]
+        return [
+            Clip(
+                index=0,
+                start_sec=0.0,
+                end_sec=meta.duration_sec,
+                duration_sec=meta.duration_sec,
+                transition_in="fade_in" if has_fade_in else "hard_cut",
+                transition_out="fade_out" if has_fade_out else "hard_cut",
+            )
+        ]
 
     # Classify each boundary by its actual frame-gradient signature: hard
     # cut (single-frame spike), dissolve (multi-frame plateau), or still_hold
     # (one side near-zero MAD because it's a held photograph).
     from .dissolve_measure import classify_boundaries
     from .media_probe import probe
+
     try:
         meta = probe(path)
         has_fade_in, has_fade_out = detect_edges(path, fps=meta.frame_rate)
@@ -107,9 +113,14 @@ def detect_clips(
             t_out = "fade_out" if has_fade_out else "hard_cut"
         else:
             t_out = boundary_class.get(out_key, "hard_cut")
-        clips.append(Clip(
-            index=i, start_sec=start, end_sec=end,
-            duration_sec=end - start,
-            transition_in=t_in, transition_out=t_out,
-        ))
+        clips.append(
+            Clip(
+                index=i,
+                start_sec=start,
+                end_sec=end,
+                duration_sec=end - start,
+                transition_in=t_in,
+                transition_out=t_out,
+            )
+        )
     return clips

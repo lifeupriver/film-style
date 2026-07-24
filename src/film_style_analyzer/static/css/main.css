@@ -172,6 +172,19 @@ img {
   margin-top: 0.35rem;
 }
 
+.masthead__genre {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.15rem 0.45rem;
+  font-family: var(--mono);
+  font-size: 0.55rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border: 1px solid var(--ink-mute);
+  border-radius: 2px;
+  color: var(--ink-mute);
+}
+
 .masthead__nav {
   display: flex;
   gap: 1.75rem;

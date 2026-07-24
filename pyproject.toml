@@ -4,14 +4,15 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "film-style-analyzer"
-version = "0.1.0"
+version = "1.0.0"
 description = "Analyze finished films across genres (wedding, commercial, brand content, social shorts, music videos, documentary) and generate per-genre editing style guides"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
+authors = [{ name = "lifeupriver" }]
 keywords = ["video", "editing", "style-transfer", "mcp", "claude", "gemini", "wedding-film", "commercial", "music-video", "documentary"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: End Users/Desktop",
     "License :: OSI Approved :: MIT License",
     "Operating System :: MacOS",
@@ -28,6 +29,12 @@ dependencies = [
     "pydantic>=2.0",
     "scenedetect[opencv]>=0.6.7",
 ]
+
+[project.urls]
+Homepage = "https://github.com/lifeupriver/film-style"
+Repository = "https://github.com/lifeupriver/film-style"
+Documentation = "https://github.com/lifeupriver/film-style#readme"
+Issues = "https://github.com/lifeupriver/film-style/issues"
 
 [project.optional-dependencies]
 audio = [
@@ -57,7 +64,20 @@ shots = [
 ]
 dev = [
     "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.4",
 ]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501", "E731", "E402", "F841", "E741"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [project.scripts]
 film-style = "film_style_analyzer.cli:cli"

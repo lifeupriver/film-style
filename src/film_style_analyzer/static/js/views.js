@@ -2170,6 +2170,31 @@ export function renderSettings(cfg) {
 
   const fields = [
     {
+      key: "brand_name",
+      label: "Brand name",
+      hint: "Dashboard masthead and export titles.",
+      type: "text",
+    },
+    {
+      key: "editor_name",
+      label: "Editor name",
+      hint: "Used in guides and MCP prompts.",
+      type: "text",
+    },
+    {
+      key: "default_genre",
+      label: "Default genre",
+      hint: "Active workspace (wedding, commercial, etc.). Restart serve after change.",
+      type: "text",
+    },
+    {
+      key: "claude_backend",
+      label: "Claude backend",
+      hint: "api (Anthropic SDK) or cli (local Claude Code).",
+      type: "select",
+      options: ["api", "cli"],
+    },
+    {
       key: "whisper_model",
       label: "Whisper model",
       hint: "WhisperX checkpoint. Larger is more accurate, slower.",
@@ -2235,6 +2260,13 @@ export function renderSettings(cfg) {
     if (f.type === "checkbox") {
       input = el("input", { type: "checkbox", "data-key": f.key });
       if (cfg[f.key]) input.checked = true;
+    } else if (f.type === "select") {
+      input = el("select", { "data-key": f.key });
+      for (const opt of f.options || []) {
+        const o = el("option", { value: opt }, [opt]);
+        if (cfg[f.key] === opt) o.selected = true;
+        input.appendChild(o);
+      }
     } else {
       input = el("input", {
         type: f.type,

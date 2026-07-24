@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from film_style_analyzer.config import Config, load, write_default
+from film_style_analyzer.config import load, write_default
 
 
 def test_load_defaults_when_missing(tmp_path: Path):
