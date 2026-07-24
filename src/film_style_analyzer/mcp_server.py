@@ -1081,6 +1081,133 @@ def tool_predict_cuts(
     }
 
 
+def tool_plan_edit(
+    clip_scores_path: str,
+    *,
+    song_path: str | None = None,
+    structure: str | None = None,
+    target_duration_sec: float | None = None,
+    brief: str | None = None,
+    min_score: int = 50,
+    planner: str = "claude",
+    fps: int = 24,
+) -> dict[str, Any]:
+    """Plan a rough cut (Claude or greedy) without writing FCPXML yet.
+
+    Returns the edit plan JSON plus summary metadata. Use export_assembly_fcpxml
+    or assemble_rough_cut to write the timeline.
+    """
+    from .assembler import AssembleError, assemble
+    from .config import load as load_config
+
+    scores = Path(clip_scores_path).expanduser()
+    if not scores.is_file():
+        raise MCPServerError(f"clip scores not found: {scores}")
+
+    plan_path = scores.with_suffix(".edit-plan.json")
+    cfg = load_config()
+    try:
+        result = assemble(
+            clip_scores_path=scores,
+            output_fcpxml=scores.with_suffix(".rough.fcpxml"),
+            plan_output=plan_path,
+            planner=planner.lower(),
+            song_path=Path(song_path).expanduser() if song_path else None,
+            structure=structure,
+            target_duration_sec=target_duration_sec,
+            min_score=min_score,
+            brief=brief,
+            backend=cfg.claude_backend,
+            model=cfg.anthropic_model,
+            fps=fps,
+        )
+    except AssembleError as e:
+        raise MCPServerError(str(e))
+
+    plan_data = json.loads(plan_path.read_text())
+    return {
+        "summary": result,
+        "edit_plan": plan_data,
+        "edit_plan_path": str(plan_path),
+        "fcpxml_path": result["fcpxml_path"],
+    }
+
+
+def tool_assemble_rough_cut(
+    clip_scores_path: str,
+    output_fcpxml: str,
+    *,
+    plan_path: str | None = None,
+    song_path: str | None = None,
+    structure: str | None = None,
+    target_duration_sec: float | None = None,
+    brief: str | None = None,
+    min_score: int = 50,
+    planner: str = "claude",
+    fps: int = 24,
+) -> dict[str, Any]:
+    """Assemble a rough-cut FCPXML from scored raw footage.
+
+    By default Claude plans clip order using the style profile, structure
+    template, optional song cut times, and clip catalog. Set planner='greedy'
+    for a deterministic fallback.
+    """
+    from .assembler import AssembleError, assemble
+    from .config import load as load_config
+
+    scores = Path(clip_scores_path).expanduser()
+    out = Path(output_fcpxml).expanduser()
+    cfg = load_config()
+    try:
+        return assemble(
+            clip_scores_path=scores,
+            output_fcpxml=out,
+            plan_output=out.with_suffix(".edit-plan.json"),
+            planner=planner.lower(),
+            song_path=Path(song_path).expanduser() if song_path else None,
+            structure=structure,
+            target_duration_sec=target_duration_sec,
+            min_score=min_score,
+            brief=brief,
+            backend=cfg.claude_backend,
+            model=cfg.anthropic_model,
+            fps=fps,
+            existing_plan_path=Path(plan_path).expanduser() if plan_path else None,
+        )
+    except AssembleError as e:
+        raise MCPServerError(str(e))
+
+
+def tool_export_edit_plan_fcpxml(
+    plan_path: str,
+    clip_scores_path: str,
+    output_fcpxml: str,
+    *,
+    song_path: str | None = None,
+    fps: int = 24,
+) -> dict[str, Any]:
+    """Export an existing edit-plan JSON to FCPXML."""
+    from .assembler import AssembleError, export_plan_to_fcpxml
+
+    try:
+        return export_plan_to_fcpxml(
+            plan_path=Path(plan_path).expanduser(),
+            clip_scores_path=Path(clip_scores_path).expanduser(),
+            output_fcpxml=Path(output_fcpxml).expanduser(),
+            song_path=Path(song_path).expanduser() if song_path else None,
+            fps=fps,
+        )
+    except AssembleError as e:
+        raise MCPServerError(str(e))
+
+
+def tool_list_assembly_structures() -> dict[str, Any]:
+    """List built-in narrative structure templates for assemble."""
+    from .structure_templates import list_templates
+
+    return {"structures": list_templates()}
+
+
 # ---------------------------------------------------------------------------
 # Resources — exposed at film-style:// URIs.
 # ---------------------------------------------------------------------------
@@ -1122,6 +1249,11 @@ ask. Always begin by calling get_style_profile() so your suggestions are
 grounded in the editor's measured patterns, not generic conventions.
 
 Common workflows:
+  • Assemble a rough cut from scored footage:
+      assemble_rough_cut(clip_scores_path=..., output_fcpxml=..., structure='wedding-classic')
+    Or plan first, review the JSON, then export:
+      plan_edit(...) → export_edit_plan_fcpxml(...)
+  • Score raw proxies first if needed: score-clips CLI, then assemble.
 
   A. "Analyze these films and give me a report"
      1. analyze_films(paths=[...])  — slow; ~5 min per film with audio,
@@ -1521,6 +1653,74 @@ def build_server():
         Snaps each ideal cut to the nearest beat in the song. Returns
         timestamps + an FCPXML marker track string."""
         return tool_predict_cuts(song_path, target_duration_sec, snap_tolerance_sec)
+
+    @mcp.tool()
+    def list_assembly_structures() -> dict:
+        """List built-in structure templates (wedding-classic, commercial-30, …)."""
+        return tool_list_assembly_structures()
+
+    @mcp.tool()
+    def plan_edit(
+        clip_scores_path: str,
+        song_path: str | None = None,
+        structure: str | None = None,
+        target_duration_sec: float | None = None,
+        brief: str | None = None,
+        min_score: int = 50,
+        planner: str = "claude",
+        fps: int = 24,
+    ) -> dict:
+        """Plan a rough cut edit (Claude by default). Returns edit_plan JSON + FCPXML path."""
+        return tool_plan_edit(
+            clip_scores_path,
+            song_path=song_path,
+            structure=structure,
+            target_duration_sec=target_duration_sec,
+            brief=brief,
+            min_score=min_score,
+            planner=planner,
+            fps=fps,
+        )
+
+    @mcp.tool()
+    def assemble_rough_cut(
+        clip_scores_path: str,
+        output_fcpxml: str,
+        plan_path: str | None = None,
+        song_path: str | None = None,
+        structure: str | None = None,
+        target_duration_sec: float | None = None,
+        brief: str | None = None,
+        min_score: int = 50,
+        planner: str = "claude",
+        fps: int = 24,
+    ) -> dict:
+        """Assemble a rough-cut FCPXML from scored raw footage."""
+        return tool_assemble_rough_cut(
+            clip_scores_path,
+            output_fcpxml,
+            plan_path=plan_path,
+            song_path=song_path,
+            structure=structure,
+            target_duration_sec=target_duration_sec,
+            brief=brief,
+            min_score=min_score,
+            planner=planner,
+            fps=fps,
+        )
+
+    @mcp.tool()
+    def export_edit_plan_fcpxml(
+        plan_path: str,
+        clip_scores_path: str,
+        output_fcpxml: str,
+        song_path: str | None = None,
+        fps: int = 24,
+    ) -> dict:
+        """Export a saved edit-plan JSON to FCPXML for Final Cut Pro."""
+        return tool_export_edit_plan_fcpxml(
+            plan_path, clip_scores_path, output_fcpxml, song_path=song_path, fps=fps
+        )
 
     # --- resources ---
     active_genre = paths_for_genre().genre

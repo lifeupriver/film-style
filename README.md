@@ -207,6 +207,24 @@ film-style learn-shots                    # ~2-3 min for ~1500 thumbnails
 
 # 9. Score raw-footage proxies against the learned shot profile.
 film-style score-clips ~/footage/proxies/ --detect-trims
+
+# 10. Assemble a Claude-planned rough cut → import into Final Cut Pro.
+film-style assemble \
+  --scores ~/footage/proxies/clip-scores.json \
+  --song ~/music/license-track.mp3 \
+  --structure wedding-classic \
+  --target-duration 360 \
+  --output ~/footage/rough-v1.fcpxml
+```
+
+Open `rough-v1.fcpxml` in Final Cut Pro (File → Import → XML). The companion
+`rough-v1.edit-plan.json` records Claude's clip choices for review or re-export.
+
+Use `--planner greedy` for a deterministic fallback without API/CLI calls, or
+pass `--plan existing-plan.json` to re-export a saved edit plan.
+
+Structure templates: `film-style assemble --list-structures`
+
 ```
 
 ### Use your Claude Pro/Max subscription instead of API tokens
@@ -253,6 +271,7 @@ and writes labels back via `set_chapter_labels_bulk`. Same flow for
 | `predict-cuts <song>` | Predict cut points for a song; emit FCPXML marker track |
 | `learn-shots` | Build `shot-profile.json` from corpus thumbnails (composition + emotion) |
 | `score-clips <path>` | Score raw footage against `shot-profile.json`; optional trim detection |
+| `assemble` | Claude-planned rough cut → FCPXML importable in Final Cut Pro |
 | `export-notebooklm` | Write a NotebookLM-ingestible markdown brief |
 | `serve` | Boot the dashboard at http://127.0.0.1:7421 |
 | `mcp-serve` | Run the MCP server (for Claude Desktop) |
@@ -323,7 +342,7 @@ Restart Claude Desktop. The toolset shows up under the connections menu.
 
 **Edit / Correct** — `set_film_metadata`, `set_chapter_label`
 
-**Generate** — `compare_fcpxml`, `predict_cuts`, `export_for_notebooklm`
+**Generate** — `compare_fcpxml`, `predict_cuts`, `plan_edit`, `assemble_rough_cut`, `export_edit_plan_fcpxml`, `export_for_notebooklm`
 
 **Resources** auto-loadable as conversation context:
 - `film-style://profile` — typed style-profile.json
@@ -350,6 +369,10 @@ Restart Claude Desktop. The toolset shows up under the connections menu.
 > *"Build me a NotebookLM source."*
 >
 > Claude calls `export_for_notebooklm()`. You paste the markdown into NotebookLM as a source alongside any YouTube reference videos.
+
+> *"Using my profile, assemble a rough cut from `~/footage/proxies/clip-scores.json` to `~/footage/rough.fcpxml`."*
+>
+> Claude calls `assemble_rough_cut(clip_scores_path=..., output_fcpxml=..., structure='wedding-classic', song_path=...)`. Review `rough.edit-plan.json`, then import the FCPXML into Final Cut.
 
 > *"Using my profile, propose where to cut a 3-minute teaser to `~/music/new-song.mp3`."*
 >

@@ -1183,6 +1183,134 @@ def genre_init(name: str) -> None:
     console.print(f"[green]wrote[/green] {target}")
 
 
+@cli.command(name="assemble")
+@_genre_option
+@click.option(
+    "--scores",
+    "scores_path",
+    type=click.Path(exists=True, path_type=Path),
+    required=True,
+    help="clip-scores.json from score-clips.",
+)
+@click.option(
+    "--output",
+    "output_path",
+    type=click.Path(path_type=Path),
+    required=True,
+    help="FCPXML rough cut output path.",
+)
+@click.option(
+    "--plan-output",
+    type=click.Path(path_type=Path),
+    default=None,
+    help="Write the edit plan JSON here.",
+)
+@click.option(
+    "--plan",
+    "plan_path",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Use an existing edit plan JSON instead of planning.",
+)
+@click.option(
+    "--song",
+    "song_path",
+    type=click.Path(exists=True, path_type=Path),
+    default=None,
+    help="Music bed; also supplies beat-aligned cut times to the planner.",
+)
+@click.option(
+    "--structure",
+    default=None,
+    help="Structure template (wedding-classic, commercial-30, montage, …).",
+)
+@click.option(
+    "--target-duration",
+    "target_duration_sec",
+    type=float,
+    default=None,
+    help="Target runtime in seconds (default: profile median).",
+)
+@click.option(
+    "--planner",
+    type=click.Choice(["claude", "greedy"], case_sensitive=False),
+    default="claude",
+    show_default=True,
+    help="claude = Claude plans clip order; greedy = deterministic fallback.",
+)
+@click.option("--brief", default=None, help="Extra editorial direction for Claude.")
+@click.option("--min-score", default=50, show_default=True, help="Minimum clip score to consider.")
+@click.option("--fps", default=24, show_default=True)
+@click.option(
+    "--media-root",
+    type=click.Path(exists=True, file_okay=False, path_type=Path),
+    default=None,
+    help="Remap relative media paths in FCPXML.",
+)
+@click.option(
+    "--list-structures",
+    is_flag=True,
+    help="List structure templates and exit.",
+)
+def assemble_cmd(
+    scores_path: Path,
+    output_path: Path,
+    plan_output: Path | None,
+    plan_path: Path | None,
+    song_path: Path | None,
+    structure: str | None,
+    target_duration_sec: float | None,
+    planner: str,
+    brief: str | None,
+    min_score: int,
+    fps: int,
+    media_root: Path | None,
+    list_structures: bool,
+    genre: str | None,
+) -> None:
+    """Assemble a rough cut FCPXML from scored raw footage (Claude plans the edit)."""
+    from .assembler import AssembleError, assemble
+    from .structure_templates import list_templates
+
+    if list_structures:
+        for name in list_templates():
+            console.print(name)
+        return
+
+    cfg = load_config()
+    try:
+        result = assemble(
+            clip_scores_path=scores_path,
+            output_fcpxml=output_path,
+            plan_output=plan_output or output_path.with_suffix(".edit-plan.json"),
+            genre=genre,
+            planner=planner.lower(),
+            song_path=song_path,
+            structure=structure,
+            target_duration_sec=target_duration_sec,
+            min_score=min_score,
+            brief=brief,
+            backend=cfg.claude_backend,
+            model=cfg.anthropic_model,
+            fps=fps,
+            media_root=media_root,
+            existing_plan_path=plan_path,
+        )
+    except (AssembleError, Exception) as e:
+        raise click.ClickException(str(e)) from e
+
+    console.rule("Rough cut assembled")
+    console.print(f"Title:     {result['title']}")
+    console.print(f"Planner:   {result['planner']}")
+    console.print(f"Clips:     {result['clip_count']}")
+    console.print(f"Duration:  {result['total_duration_sec']:.1f}s")
+    console.print(f"FCPXML:    {result['fcpxml_path']}")
+    if result.get("plan_path"):
+        console.print(f"Edit plan: {result['plan_path']}")
+    if result.get("notes"):
+        console.print(f"\nNotes: {result['notes']}")
+
+
 # ---------------------------------------------------------------------------
 # Migration: legacy flat layout → per-genre subfolders
 # ---------------------------------------------------------------------------
