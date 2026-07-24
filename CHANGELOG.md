@@ -2,6 +2,16 @@
 
 All notable changes to this project are documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- **`film-style assemble`** — Claude-planned rough cuts exported as FCPXML for Final Cut Pro
+- Edit plan JSON schema (`edit_plan.py`) with validation and greedy fallback planner
+- `fcpxml_writer.py` — video spine + optional music lane export
+- Structure templates (`wedding-classic`, `commercial-30`, `montage`, …)
+- MCP tools: `plan_edit`, `assemble_rough_cut`, `export_edit_plan_fcpxml`, `list_assembly_structures`
+
 ## [1.0.0] - 2026-07-24
 
 ### Added
