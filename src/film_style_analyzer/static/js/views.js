@@ -133,11 +133,12 @@ export function renderCorpus(stats, films) {
   // ----- TRANSITIONS DONUT + AUDIO STRIP --------
   const right = el("div", {}, [
     el("p", { class: "chart__caption", style: { marginBottom: "1rem" } }, [
-      `${trans.hard_cut_pct ?? 0}% hard cuts. The remainder breathes through dissolves and the occasional fade.`,
+      `${trans.hard_cut_pct ?? 0}% hard cuts. The remainder breathes through dissolves, still holds, and the occasional fade.`,
     ]),
     legendList([
       { label: "Hard cut", color: "var(--amber)" },
       { label: "Dissolve", color: "var(--dust)" },
+      { label: "Still hold", color: "var(--sage)" },
       { label: "Fade", color: "var(--plum)" },
     ]),
   ]);
@@ -152,6 +153,7 @@ export function renderCorpus(stats, films) {
       donut([
         { label: "Hard cut", value: trans.hard_cut_pct ?? 0, color: "var(--amber)" },
         { label: "Dissolve", value: trans.dissolve_pct ?? 0, color: "var(--dust)" },
+        { label: "Still hold", value: trans.still_hold_pct ?? 0, color: "var(--sage)" },
         { label: "Fade", value: trans.fade_pct ?? 0, color: "var(--plum)" },
       ]),
     ]),

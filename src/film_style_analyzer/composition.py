@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 import math
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -28,6 +29,24 @@ _mp_face_detection = None
 _mp_face_mesh = None
 _mp_pose = None
 _mp_unavailable = False
+_mp_warned = False
+
+_SHOTS_MISSING_MSG = (
+    "MediaPipe is not installed, so person/face detection is disabled and "
+    "composition profiles for people shots will be meaningless. Install the "
+    "shots extras: pip install 'film-style-analyzer[shots]'"
+)
+
+
+def _warn_shots_missing() -> None:
+    """Emit a single clear warning that the optional [shots] extras are
+    missing. Guarded so it fires at most once and never at import time."""
+    global _mp_warned
+    if _mp_warned:
+        return
+    _mp_warned = True
+    warnings.warn(_SHOTS_MISSING_MSG, RuntimeWarning, stacklevel=3)
+    logger.warning(_SHOTS_MISSING_MSG)
 
 
 def _load_mediapipe():
@@ -35,6 +54,7 @@ def _load_mediapipe():
     (None, None, None) if MediaPipe is unavailable."""
     global _mp_face_detection, _mp_face_mesh, _mp_pose, _mp_unavailable
     if _mp_unavailable:
+        _warn_shots_missing()
         return None, None, None
     if _mp_face_detection is not None:
         return _mp_face_detection, _mp_face_mesh, _mp_pose
@@ -46,6 +66,7 @@ def _load_mediapipe():
     except (ImportError, AttributeError) as e:
         logger.info("MediaPipe solutions API not available: %s", e)
         _mp_unavailable = True
+        _warn_shots_missing()
         return None, None, None
     return _mp_face_detection, _mp_face_mesh, _mp_pose
 
@@ -402,8 +423,10 @@ def detect_horizon_tilt(image: np.ndarray,
 
     angles = []
     for line in lines:
-        x1, y1, x2, y2 = line[0]
-        angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
+        # HoughLinesP returns an (N, 1, 4) array, but the exact nesting varies
+        # across OpenCV/numpy builds; flatten robustly to the four endpoints.
+        x1, y1, x2, y2 = np.asarray(line).reshape(-1)[:4]
+        angle = math.degrees(math.atan2(float(y2 - y1), float(x2 - x1)))
         # Normalize to [-90, 90]
         if angle > 90:
             angle -= 180
@@ -630,7 +653,11 @@ def analyze_frame(frame: np.ndarray | Path | str) -> dict:
         image = frame
 
     faces = detect_faces(image)
-    pose = detect_pose(image) if faces else None
+    # Run pose detection independently of face detection so "shooting from
+    # behind" (a body is present but the face is turned away / not visible) is
+    # actually detectable. detect_pose returns None when no body is found, so
+    # genuine sunset / detail shots still register as no-person.
+    pose = detect_pose(image)
     mesh = detect_face_mesh(image) if faces else None
     has_person = bool(faces) or pose is not None
 
