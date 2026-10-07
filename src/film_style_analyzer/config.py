@@ -6,6 +6,12 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+# Model used for the style guide and the vision labelling passes.
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5"
+# Earlier defaults that `config --init` wrote into config.json. A saved value
+# equal to one of these is treated as "use the current default".
+_RETIRED_DEFAULT_MODELS = {"claude-sonnet-4-20250514"}
+
 CONFIG_PATH = Path.home() / ".film-style-analyzer" / "config.json"
 
 
@@ -20,7 +26,7 @@ class Config:
     language: str = "en"
     scene_detect_threshold: float | None = None
     min_scene_length_sec: float = 0.5
-    anthropic_model: str = "claude-sonnet-4-20250514"
+    anthropic_model: str = DEFAULT_ANTHROPIC_MODEL
     gemini_model: str = "gemini-2.5-pro"
     thumbnail_quality: int = 2
     cleanup_audio_after_analysis: bool = True
@@ -47,6 +53,8 @@ def load(path: Path | None = None) -> Config:
         return Config()
     valid = {f for f in Config.__dataclass_fields__}
     filtered = {k: v for k, v in raw.items() if k in valid}
+    if filtered.get("anthropic_model") in _RETIRED_DEFAULT_MODELS:
+        filtered.pop("anthropic_model")
     return Config(**{**asdict(Config()), **filtered})
 
 

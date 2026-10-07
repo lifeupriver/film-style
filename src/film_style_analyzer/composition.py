@@ -402,7 +402,8 @@ def detect_horizon_tilt(image: np.ndarray,
 
     angles = []
     for line in lines:
-        x1, y1, x2, y2 = line[0]
+        # OpenCV 4 returns lines shaped (N, 1, 4); OpenCV 5 returns (N, 4).
+        x1, y1, x2, y2 = np.asarray(line).reshape(-1)[:4]
         angle = math.degrees(math.atan2(y2 - y1, x2 - x1))
         # Normalize to [-90, 90]
         if angle > 90:
