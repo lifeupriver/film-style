@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.11">
+  <resources>
+    <format id="r1" frameDuration="1/24s" width="3840" height="2160"/>
+    <asset id="a1" name="A001_vows" start="0s" duration="120s" hasVideo="1" hasAudio="1" format="r1">
+      <media-rep kind="original-media" src="file:///Volumes/Wed/A001_vows.MOV"/>
+    </asset>
+    <asset id="a2" name="B002_rings" start="0s" duration="20s" hasVideo="1" hasAudio="1" format="r1">
+      <media-rep kind="original-media" src="file:///Volumes/Wed/B002_rings.MOV"/>
+    </asset>
+    <asset id="a3" name="B003_dance" start="0s" duration="30s" hasVideo="1" hasAudio="1" format="r1">
+      <media-rep kind="original-media" src="file:///Volumes/Wed/B003_dance.MOV"/>
+    </asset>
+    <asset id="m1" name="Song" start="0s" duration="200s" hasVideo="0" hasAudio="1">
+      <media-rep kind="original-media" src="file:///Music/song.wav"/>
+    </asset>
+  </resources>
+  <library><event name="Wedding"><project name="Smith Highlight">
+    <sequence format="r1" duration="40s">
+      <spine>
+        <asset-clip ref="a1" name="vows" offset="0s" start="10s" duration="20s" audioRole="dialogue">
+          <chapter-marker start="10s" duration="1/24s" value="Ceremony"/>
+          <asset-clip ref="a2" name="rings" lane="1" offset="15s" start="2s" duration="4s">
+            <adjust-volume amount="-96dB"/>
+            <timeMap><timept time="0s" value="0s"/><timept time="4s" value="2s"/></timeMap>
+          </asset-clip>
+          <asset-clip ref="m1" name="song" lane="-1" offset="10s" start="0s" duration="40s" audioRole="music"/>
+        </asset-clip>
+        <transition name="Cross Dissolve" offset="19s" duration="2s"/>
+        <asset-clip ref="a3" name="dance" offset="20s" start="5s" duration="20s">
+          <chapter-marker start="5s" duration="1/24s" value="Reception"/>
+          <adjust-transform scale="1.2 1.2"/>
+          <adjust-volume amount="-60dB"/>
+        </asset-clip>
+        <transition name="Fade To Black" offset="38s" duration="2s"/>
+      </spine>
+    </sequence>
+  </project></event></library>
+</fcpxml>
