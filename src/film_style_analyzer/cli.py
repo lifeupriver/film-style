@@ -14,7 +14,6 @@ from . import __version__
 from .aggregator import aggregate
 from .analyzer import analyze_film
 from .config import CONFIG_PATH, load as load_config, write_default as write_default_config
-from .fcpxml_parser import parse as parse_fcpxml
 from .guide_writer import write_guide
 from .profile_writer import build_profile
 from .schemas import FilmAnalysis
@@ -318,95 +317,167 @@ def list_cmd() -> None:
 
 
 @cli.command()
-@click.argument("fcpxml_path", type=click.Path(exists=True, path_type=Path))
-def compare(fcpxml_path: Path) -> None:
-    """Compare a rough-cut FCPXML against the established style profile."""
+@click.argument("timeline_path", type=click.Path(exists=True, path_type=Path))
+@click.option("--json", "as_json", is_flag=True,
+              help="Print the full report as JSON instead of a summary.")
+@click.option("--max-shots", default=15, show_default=True,
+              help="How many off-pace shots to list (largest first).")
+def compare(timeline_path: Path, as_json: bool, max_shots: int) -> None:
+    """Compare an edited timeline (FCPXML or OTIO) against the style profile."""
+    from .compare import build_report
+    from .timeline import load_timeline
+
     if not DEFAULT_STATS.exists():
         raise click.ClickException("no aggregate stats — run `film-style guide` first")
     profile = json.loads(DEFAULT_STATS.read_text())
-    cut = parse_fcpxml(fcpxml_path)
+    try:
+        cut = load_timeline(timeline_path)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+    report = build_report(cut, profile)
 
-    console.rule(f"Style Comparison: {fcpxml_path.name}")
+    if as_json:
+        click.echo(json.dumps(report, indent=2))
+        return
+
+    console.rule(f"Style Comparison: {timeline_path.name}")
     console.print(f"vs. profile of {profile['film_count']} films\n")
 
-    # Duration
     dur = cut["total_duration_sec"]
     pdur = profile["duration"]
     mins, secs = divmod(int(dur), 60)
-    in_range = pdur["min_sec"] <= dur <= pdur["max_sec"]
-    badge = "[green]✓[/green]" if in_range else "[yellow]⚠[/yellow]"
+    badge = "[green]✓[/green]" if report["deltas"]["duration_in_range"] else "[yellow]⚠[/yellow]"
     console.print(f"DURATION  {mins}:{secs:02d}  "
                   f"(profile {int(pdur['min_sec'])}s–{int(pdur['max_sec'])}s)  {badge}")
 
-    # Clip count
-    expected_clips = profile["clip_counts"]["avg"]
-    delta_clips = (cut["clip_count"] - expected_clips) / expected_clips * 100 if expected_clips else 0
-    console.print(f"CLIPS     {cut['clip_count']}  (profile avg {expected_clips})  "
+    delta_clips = report["deltas"]["clip_count_pct"]
+    console.print(f"CLIPS     {cut['clip_count']}  (profile avg {profile['clip_counts']['avg']})  "
                   f"{'+' if delta_clips >= 0 else ''}{delta_clips:.0f}%")
 
-    # Avg clip duration
-    expected_avg = profile["pacing"]["avg_clip_sec"]
-    actual_avg = cut["avg_clip_sec"]
-    delta_pace = (actual_avg - expected_avg) / expected_avg * 100 if expected_avg else 0
-    console.print(f"AVG CLIP  {actual_avg:.2f}s  (profile {expected_avg}s)  "
+    delta_pace = report["deltas"]["avg_clip_pct"]
+    console.print(f"AVG CLIP  {cut['avg_clip_sec']:.2f}s  (profile {profile['pacing']['avg_clip_sec']}s)  "
                   f"{'+' if delta_pace >= 0 else ''}{delta_pace:.0f}%")
 
-    # Dissolves
     expected_diss = profile["transitions"].get("avg_dissolves_per_film") or 0
     console.print(f"DISSOLVES {cut['dissolves']}  (profile avg {expected_diss})")
 
-    # Decile pacing comparison.
-    pacing_deviations: list[tuple[int, float, float]] = []
-    expected_deciles = profile["pacing"].get("avg_deciles") or []
-    durations = cut.get("clip_durations") or []
-    if expected_deciles and durations:
-        n = len(durations)
-        actual_deciles = [
-            sum(durations[i * n // 10:(i + 1) * n // 10] or [0.0])
-            / max(1, len(durations[i * n // 10:(i + 1) * n // 10]))
-            for i in range(10)
-        ]
+    if report["pacing_diff"]:
         console.print("\nPACING CURVE (decile)")
-        for i, (a, e) in enumerate(zip(actual_deciles, expected_deciles)):
+        for d in report["pacing_diff"]:
+            i = d["decile"]
             tag = ""
-            if e:
-                d = (a - e) / e * 100
-                if abs(d) > 25:
-                    tag = f"  [yellow]{'+' if d >= 0 else ''}{d:.0f}%[/yellow]"
-                    pacing_deviations.append((i, a, e))
-            console.print(f"  {i*10:>3}-{(i+1)*10:<3}%  actual {a:.2f}s  profile {e:.2f}s{tag}")
+            if d["expected"] and abs(d["delta_pct"]) > 25:
+                tag = (f"  [yellow]{'+' if d['delta_pct'] >= 0 else ''}"
+                       f"{d['delta_pct']:.0f}%[/yellow]")
+            console.print(f"  {i*10:>3}-{(i+1)*10:<3}%  actual {d['actual']:.2f}s  "
+                          f"profile {d['expected']:.2f}s{tag}")
 
-    # Audio (FCPXML).
+    shots = report["shot_deviations"]
+    if shots:
+        console.print(f"\nSHOTS OFF PACE  {len(shots)} of {len(cut.get('visible_clips') or [])}")
+        table = Table(show_header=True, header_style="bold")
+        for col in ("#", "at", "length", "profile", "do", "name"):
+            table.add_column(col)
+        for sh in shots[:max_shots]:
+            m, sec = divmod(sh["start_sec"], 60)
+            table.add_row(
+                str(sh["index"]), f"{int(m)}:{sec:05.2f}",
+                f"{sh['duration_sec']:.2f}s", f"{sh['expected_sec']:.2f}s",
+                f"{sh['action']} {sh['by_sec']:.2f}s", sh["name"][:40],
+            )
+        console.print(table)
+
     audio = cut.get("audio") or {}
     if audio.get("has_audio"):
         console.print(f"\nAUDIO TRACK  {audio['audio_clip_count']} clips, "
                       f"{audio['audio_total_duration_sec']}s"
                       + (f"  roles: {', '.join(audio['audio_roles'])}" if audio['audio_roles'] else ""))
     else:
-        console.print("\nAUDIO TRACK  none detected in FCPXML")
+        console.print("\nAUDIO TRACK  none detected")
 
     console.print()
-    suggestions = []
-    if abs(delta_pace) > 15:
-        direction = "tighten" if delta_pace > 0 else "lengthen"
-        suggestions.append(f"{direction} clips toward {expected_avg}s avg")
-    if abs(delta_clips) > 20:
-        direction = "remove" if delta_clips > 0 else "add"
-        suggestions.append(f"{direction} clips toward {expected_clips} total")
-    if expected_diss and cut["dissolves"] > expected_diss * 1.5:
-        suggestions.append(f"reduce dissolves toward ~{expected_diss}")
-    for i, actual_d, expected_d in pacing_deviations:
-        direction = "tighten" if actual_d > expected_d else "lengthen"
-        suggestions.append(
-            f"{direction} clips at {i*10}-{(i+1)*10}% mark "
-            f"({actual_d:.2f}s → {expected_d:.2f}s)"
-        )
-    if suggestions:
+    if report["suggestions"]:
         console.print("[bold]Suggestions:[/bold]")
-        for i, s in enumerate(suggestions, 1):
+        for i, s in enumerate(report["suggestions"], 1):
             console.print(f"  {i}. {s}")
     else:
         console.print("[green]No significant deviations.[/green]")
+
+
+@cli.command(name="eddie-plan")
+@click.option("--profile", "profile_path", type=click.Path(path_type=Path),
+              default=DEFAULT_PROFILE, show_default=True,
+              help="style-profile.json to translate.")
+@click.option("--output", type=click.Path(path_type=Path), default=None,
+              help="Where to write eddie-plan.json. Default: next to the profile.")
+@click.option("--json", "as_json", is_flag=True, help="Print the plan as JSON.")
+def eddie_plan(profile_path: Path, output: Path | None, as_json: bool) -> None:
+    """Translate the style profile into settings for Eddie's editing tools."""
+    from .eddie import build_plan
+
+    if not profile_path.is_file():
+        raise click.ClickException(f"no style profile at {profile_path} — run `film-style guide` first")
+    try:
+        plan = build_plan(json.loads(profile_path.read_text()))
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+    output = output or profile_path.with_name("eddie-plan.json")
+    output.write_text(json.dumps(plan, indent=2))
+
+    if as_json:
+        click.echo(json.dumps(plan, indent=2))
+        return
+    build = plan["create_edit_result"]
+    console.rule(f"Eddie plan · {plan['film_count']} films")
+    if build.get("targetDurationMinutes"):
+        console.print(f"LENGTH       {build['targetDurationMinutes']} min"
+                      + (f" (floor {build['minimumDurationMinutes']} min)"
+                         if build.get("minimumDurationMinutes") else ""))
+    t = plan["transitions"]
+    console.print(f"TRANSITIONS  ~{t['dissolves_per_film'] or 0:.0f} dissolves"
+                  + (", fade out at end" if t["fade_out_at_end"] else ""))
+    b = plan["beats"]
+    console.print(f"BEATS        snap {'on' if b['snap'] else 'off'}"
+                  + (f" ({b['cut_on_beat_pct_target']:.0f}% of cuts on beat)"
+                     if b["cut_on_beat_pct_target"] is not None else ""))
+    if plan["grade"]:
+        g = plan["grade"]["grade_edit"]
+        console.print("GRADE        " + ", ".join(f"{k} {v}" for k, v in g.items()
+                                                  if k != "lookMatch"))
+    console.print(f"LOOK         {plan['apply_style']['style']}")
+    if plan["scene_targets"]:
+        console.print("\nSHOT LENGTH BY SCENE")
+        for s in plan["scene_targets"]:
+            if s["avg_shot_sec"]:
+                console.print(f"  {s['scene'].replace('_', ' '):<22} {s['avg_shot_sec']:.1f}s")
+    console.print(f"\n[green]Wrote {output}[/green]")
+
+
+@cli.command(name="eddie-selects")
+@click.argument("scores_path", type=click.Path(exists=True, path_type=Path))
+@click.option("--min-score", default=70, show_default=True,
+              help="Keep clips scoring at least this (0-100).")
+@click.option("--original-names", is_flag=True,
+              help="Use camera-original file names instead of the scored (proxy) names.")
+@click.option("--output", type=click.Path(path_type=Path), default=None,
+              help="Where to write eddie-selects.json. Default: next to the scores.")
+def eddie_selects(scores_path: Path, min_score: int, original_names: bool,
+                  output: Path | None) -> None:
+    """Turn clip-scores.json into soundbites for Eddie's create_edit_result."""
+    from .eddie import selects_from_scores
+
+    result = selects_from_scores(json.loads(scores_path.read_text()),
+                                 min_score=min_score,
+                                 use_original_names=original_names)
+    output = output or scores_path.with_name("eddie-selects.json")
+    output.write_text(json.dumps(result, indent=2))
+    sk = result["skipped"]
+    console.print(f"Kept {result['kept']} clips at score ≥ {min_score} "
+                  f"(skipped: {sk['below_min_score']} below, {sk['rejected']} rejected, "
+                  f"{sk['no_usable_range']} no usable range).")
+    if result["whole_clips"]:
+        console.print(f"[yellow]{result['notes'][0]}[/yellow]")
+    console.print(f"[green]Wrote {output}[/green]")
 
 
 @cli.command()
