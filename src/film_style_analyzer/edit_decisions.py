@@ -457,9 +457,14 @@ def intersect_length(x: list[tuple[float, float]], y: list[tuple[float, float]])
 
 
 def used_ranges(project: dict, *, track: str | None = None,
-                audible_only: bool = False, include_music: bool = False
-                ) -> dict[str, list[tuple[float, float]]]:
-    """Merged source-time ranges per source key."""
+                audible_only: bool = False, include_music: bool = False,
+                relative: bool = False) -> dict[str, list[tuple[float, float]]]:
+    """Merged source-time ranges per source key.
+
+    With ``relative`` the ranges are measured from the start of the file
+    rather than in the source's own timecode, so two tools that declare
+    different start timecodes for the same file still line up.
+    """
     by: dict[str, list[tuple[float, float]]] = {}
     for e in project["events"]:
         if track and e["track"] != track:
@@ -470,6 +475,7 @@ def used_ranges(project: dict, *, track: str | None = None,
             continue
         if e.get("multicam") or not e["source_key"]:
             continue
-        lo, hi = sorted((e["source_in"], e["source_out"]))
+        s0 = (e.get("source_start") or 0.0) if relative else 0.0
+        lo, hi = sorted((e["source_in"] - s0, e["source_out"] - s0))
         by.setdefault(e["source_key"], []).append((lo, hi))
     return {k: merge_ranges(v) for k, v in by.items()}

@@ -417,8 +417,11 @@ def eddie_plan(profile_path: Path, output: Path | None, as_json: bool) -> None:
 
     if not profile_path.is_file():
         raise click.ClickException(f"no style profile at {profile_path} — run `film-style guide` first")
+    from .learning_store import Store, load_learned
+
     try:
-        plan = build_plan(json.loads(profile_path.read_text()))
+        plan = build_plan(json.loads(profile_path.read_text()),
+                          load_learned(Store(_GENRE_ROOT)))
     except ValueError as e:
         raise click.ClickException(str(e)) from e
     output = output or profile_path.with_name("eddie-plan.json")
@@ -445,6 +448,19 @@ def eddie_plan(profile_path: Path, output: Path | None, as_json: bool) -> None:
         console.print("GRADE        " + ", ".join(f"{k} {v}" for k, v in g.items()
                                                   if k != "lookMatch"))
     console.print(f"LOOK         {plan['apply_style']['style']}")
+    learned = []
+    if plan.get("visual"):
+        learned.append("edit decisions")
+    if plan.get("structure"):
+        learned.append("running order")
+    if plan.get("soundbites"):
+        learned.append("spoken lines")
+    if plan.get("corrections"):
+        learned.append("corrections")
+    if plan["apply_style"].get("card"):
+        learned.append("Eddie style card")
+    console.print("LEARNED      " + (", ".join(learned) if learned else
+                                     "nothing beyond the finished films yet"))
     if plan["scene_targets"]:
         console.print("\nSHOT LENGTH BY SCENE")
         for s in plan["scene_targets"]:
@@ -478,6 +494,266 @@ def eddie_selects(scores_path: Path, min_score: int, original_names: bool,
     if result["whole_clips"]:
         console.print(f"[yellow]{result['notes'][0]}[/yellow]")
     console.print(f"[green]Wrote {output}[/green]")
+
+
+# ---------------------------------------------------------------------------
+# Learning from project files, transcripts and corrections
+# ---------------------------------------------------------------------------
+
+def _store():
+    from .learning_store import Store
+    return Store(_GENRE_ROOT)
+
+
+def _parse_timeline(path: Path) -> dict:
+    from .edit_decisions import parse_project
+    try:
+        return parse_project(path)
+    except (ValueError, OSError) as e:
+        raise click.ClickException(f"could not read {path.name}: {e}") from e
+
+
+@cli.command(name="add-project")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option("--film", "film_stem", default=None,
+              help="Stem of the analysed finished film this project made.")
+@click.option("--name", default=None, help="Name to store it under. Default: the project name.")
+def add_project(path: Path, film_stem: str | None, name: str | None) -> None:
+    """Register an editing project timeline (.fcpxml, .fcpxmld or .otio)."""
+    project = _parse_timeline(path)
+    if film_stem and not (ANALYSES_DIR / f"{film_stem}.json").exists():
+        console.print(f"[yellow]No analysed film named {film_stem}; linking anyway.[/yellow]")
+    out = _store().save_project(project, name=name, film_stem=film_stem, source_path=str(path))
+    video = [e for e in project["events"] if e["track"] == "video"]
+    console.print(f"[green]Added[/green] {project['name'] or path.stem}: "
+                  f"{project['duration_sec']:.0f}s, {len(video)} video clips from "
+                  f"{len({e['source_key'] for e in video})} source files, "
+                  f"{len(project['transitions'])} transitions, {len(project['markers'])} markers.")
+    console.print(f"Saved {out}")
+
+
+@cli.command(name="learn-edits")
+def learn_edits() -> None:
+    """Learn edit decisions and running order from registered projects and films."""
+    from .edit_profile import build_edit_profile
+    from .structure import build_structure_template
+
+    store = _store()
+    records = store.load_projects()
+    films = _load_analyses()
+    if not records and not films:
+        raise click.ClickException("nothing to learn from — run `add-project` or `analyze` first")
+    if records:
+        profile = build_edit_profile([r["project"] for r in records])
+        store.write_json(store.edit_profile, profile)
+        console.rule(f"Edit decisions · {len(records)} projects")
+        for r in profile["rules"]:
+            console.print(f"  • {r}")
+    template = build_structure_template(films, records)
+    store.write_json(store.structure_template, template)
+    console.rule(f"Running order · {template['films_with_sections']} films")
+    if template["rules"]:
+        for r in template["rules"]:
+            console.print(f"  • {r}")
+    else:
+        console.print("  No labelled sections yet. Run `guide --vision` to label chapters, "
+                      "or add section markers in your projects.")
+
+
+@cli.command(name="learn-soundbites")
+@click.option("--transcripts", "transcripts_dir", type=click.Path(exists=True, file_okay=False, path_type=Path),
+              default=None, help="Folder of transcript JSON files named after their source files.")
+@click.option("--transcribe", is_flag=True,
+              help="Transcribe spoken source files that have no transcript yet (needs the [audio] extra).")
+@click.option("--media-root", "media_roots", multiple=True, type=click.Path(exists=True, file_okay=False),
+              help="Where to look for source files that have moved. Repeatable.")
+@click.option("--write-rules", is_flag=True, help="Ask Claude to write the selection rules from the examples.")
+def learn_soundbites(transcripts_dir: Path | None, transcribe: bool, media_roots: tuple[str, ...],
+                     write_rules: bool) -> None:
+    """Learn which spoken lines you keep, from raw-source transcripts."""
+    from .edit_decisions import source_key
+    from .soundbites import build_soundbite_profile, transcribe_sources, write_soundbite_rules
+
+    store = _store()
+    records = store.load_projects()
+    if not records:
+        raise click.ClickException("no projects registered — run `add-project` first")
+    if transcripts_dir:
+        n = 0
+        for p in sorted(transcripts_dir.glob("*.json")):
+            store.save_transcript(source_key(p.name), json.loads(p.read_text()))
+            n += 1
+        console.print(f"Imported {n} transcript(s).")
+    if transcribe:
+        cfg = load_config()
+        with Progress(SpinnerColumn(), TextColumn("[bold]{task.description}"), BarColumn(),
+                      TextColumn("{task.completed}/{task.total}"), TimeElapsedColumn(),
+                      console=console) as progress:
+            task = progress.add_task("Transcribing", total=None)
+
+            def cb(i, total, name):
+                progress.update(task, completed=i - 1, total=total, description=f"Transcribing {name}")
+
+            status = transcribe_sources(records, store, media_roots=list(media_roots),
+                                        model=cfg.whisper_model, language=cfg.language, progress=cb)
+        done = sum(1 for v in status.values() if v == "transcribed")
+        missing = [k for k, v in status.items() if v == "missing"]
+        failed = {k: v for k, v in status.items() if v.startswith("failed")}
+        console.print(f"Transcribed {done}; {len(missing)} source file(s) not found"
+                      + (f"; {len(failed)} failed" if failed else "") + ".")
+        for k, v in list(failed.items())[:5]:
+            console.print(f"  [red]{k}[/red]: {v}")
+
+    profile = build_soundbite_profile(records, store.load_transcripts())
+    if not profile["stats"]["sources_with_speech"]:
+        raise click.ClickException(
+            "no transcript matched a spoken source in your projects. Import transcripts "
+            "with --transcripts, run --transcribe, or save them from Eddie (save_transcript).")
+    if write_rules:
+        cfg = load_config()
+        try:
+            profile["written_rules"] = write_soundbite_rules(
+                profile, model=cfg.anthropic_model, backend=cfg.claude_backend)
+        except Exception as e:
+            console.print(f"[yellow]Could not write rules with Claude: {e}[/yellow]")
+    store.write_json(store.soundbite_profile, profile)
+    console.rule(f"Spoken lines · {profile['stats']['sources_with_speech']} speeches")
+    for r in profile["rules"]:
+        console.print(f"  • {r}")
+    if profile.get("written_rules"):
+        console.print("\n" + profile["written_rules"])
+
+
+@cli.command(name="reference-film")
+@click.option("--like", default=None, help="Stem of a film to find the closest matches to.")
+@click.option("--set", "set_", multiple=True, help="Match on metadata, e.g. --set venue=Mohonk. Repeatable.")
+@click.option("--top", default=3, show_default=True)
+@click.option("--json", "as_json", is_flag=True)
+def reference_film(like: str | None, set_: tuple[str, ...], top: int, as_json: bool) -> None:
+    """Find the past films to imitate for a new wedding."""
+    from .metadata import parse_set_arg
+    from .structure import find_reference_films
+
+    if not like and not set_:
+        raise click.ClickException("give --like STEM and/or --set key=value")
+    store = _store()
+    metadata = dict(parse_set_arg(a) for a in set_) if set_ else None
+    try:
+        refs = find_reference_films(_load_analyses(), like=like, metadata=metadata, top=top,
+                                    projects=store.load_projects(),
+                                    soundbite_profile=store.read_json(store.soundbite_profile))
+    except ValueError as e:
+        raise click.ClickException(str(e)) from e
+    if as_json:
+        click.echo(json.dumps(refs, indent=2, default=str))
+        return
+    if not refs:
+        console.print("No matching films.")
+        return
+    for r in refs:
+        sim = f"similarity {r['similarity']:.2f}" if r["similarity"] is not None else ""
+        md = f"{r['metadata_matches']} metadata match(es)" if metadata else ""
+        console.rule(f"{r['stem']}  {sim}  {md}".strip())
+        console.print(f"  {r['duration_sec'] / 60:.1f} min, {r['shots']} shots, "
+                      f"avg {r['avg_shot_sec']:.2f}s, {r['dissolves']} dissolves")
+        if r["sections"]:
+            console.print("  " + " → ".join(f"{s['label'].replace('_', ' ')} ({s['start_pct']:.0f}%)"
+                                             for s in r["sections"]))
+        if r["project"]:
+            console.print(f"  project: {r['project']['name']}")
+        if r["soundbites"]:
+            console.print(f"  {len(r['soundbites'])} speech(es) with kept lines")
+
+
+def _print_eval(result: dict) -> None:
+    console.rule(f"Score {result['score'] if result['score'] is not None else '—'} / 100")
+    for k, v in result["components"].items():
+        console.print(f"  {k:<8} {v:5.1f}")
+    m, l = result["moments"], result["lines"]
+    if m["recall"] is not None:
+        console.print(f"\nMOMENTS  {m['shared_sec']:.0f}s of your {m['reference_sec']:.0f}s used "
+                      f"(recall {m['recall']:.0%}, precision {m['precision'] or 0:.0%})")
+    if l["recall"] is not None:
+        console.print(f"LINES    {l['shared_sec']:.0f}s of your {l['reference_sec']:.0f}s of spoken lines "
+                      f"(recall {l['recall']:.0%}, precision {l['precision'] or 0:.0%})")
+    if result["order_correlation"] is not None:
+        console.print(f"ORDER    correlation {result['order_correlation']:+.2f} "
+                      f"over {result['matched_shots']} matched shots")
+    p = result["pacing"]
+    if p["reference_avg_shot_sec"]:
+        console.print(f"PACING   avg shot {p['candidate_avg_shot_sec']}s vs your "
+                      f"{p['reference_avg_shot_sec']}s; curve correlation {p['pacing_curve_correlation']}")
+    if result["missed"]:
+        console.print("\nMissed (in your cut, not in this one):")
+        for g in result["missed"][:8]:
+            console.print(f"  {g['source_key']} {g['source_in']:.1f}–{g['source_out']:.1f}s "
+                          f"(plays at {g['plays_at_sec']:.1f}s in yours)")
+    for n in result["notes"]:
+        console.print(f"[yellow]{n}[/yellow]")
+
+
+@cli.command()
+@click.argument("reference", type=click.Path(exists=True, path_type=Path))
+@click.argument("candidate", type=click.Path(exists=True, path_type=Path))
+@click.option("--json", "as_json", is_flag=True)
+def evaluate(reference: Path, candidate: Path, as_json: bool) -> None:
+    """Score CANDIDATE (e.g. Eddie's cut) against your own cut REFERENCE of the same footage."""
+    from .cut_diff import evaluate as run_eval
+
+    result = run_eval(_parse_timeline(reference), _parse_timeline(candidate))
+    if as_json:
+        click.echo(json.dumps(result, indent=2))
+    else:
+        _print_eval(result)
+
+
+@cli.command(name="learn-correction")
+@click.argument("before", type=click.Path(exists=True, path_type=Path))
+@click.argument("after", type=click.Path(exists=True, path_type=Path))
+@click.option("--note", default="", help="Anything to remember about this correction.")
+def learn_correction(before: Path, after: Path, note: str) -> None:
+    """Learn from how you fixed a cut: BEFORE (e.g. Eddie's export) → AFTER (your fix)."""
+    from .cut_diff import correction, correction_rules
+
+    store = _store()
+    record = correction(_parse_timeline(before), _parse_timeline(after), note=note)
+    store.append_correction(record)
+    s = record["summary"]
+    console.print(f"Recorded: {s['removed_shots']} shots removed, {s['added_shots']} added, "
+                  f"{len(record['trims'])} kept and retimed; length "
+                  f"{s['duration_before_sec']:.0f}s → {s['duration_after_sec']:.0f}s.")
+    rules = correction_rules(store.load_corrections())["rules"]
+    if rules:
+        console.rule(f"What your corrections say · {len(store.load_corrections())}")
+        for r in rules:
+            console.print(f"  • {r}")
+
+
+@cli.group(name="eddie-reference")
+def eddie_reference() -> None:
+    """Keep Eddie's analyses of your films (shot lists, style cards)."""
+
+
+@eddie_reference.command(name="add")
+@click.argument("path", type=click.Path(exists=True, path_type=Path))
+@click.option("--kind", type=click.Choice(["shot_list", "card"]), required=True)
+@click.option("--film", "film_stem", default=None)
+@click.option("--name", default=None)
+def eddie_reference_add(path: Path, kind: str, film_stem: str | None, name: str | None) -> None:
+    """Save a JSON shot list or style card that Eddie produced."""
+    data = json.loads(path.read_text())
+    out = _store().save_eddie_reference(kind, data, name or film_stem or path.stem, film_stem)
+    console.print(f"[green]Saved[/green] {out}")
+
+
+@eddie_reference.command(name="list")
+def eddie_reference_list() -> None:
+    """List saved Eddie shot lists and style cards."""
+    refs = _store().load_eddie_references()
+    if not refs:
+        console.print("None saved.")
+    for r in refs:
+        console.print(f"{r['kind']:<10} {r['name']:<30} {r.get('film_stem') or ''}  {r['saved_at'][:10]}")
 
 
 @cli.command()

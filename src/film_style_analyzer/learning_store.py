@@ -169,3 +169,18 @@ class Store:
                     continue
         out.sort(key=lambda r: r.get("saved_at", ""))
         return out
+
+
+def load_learned(store: Store) -> dict:
+    """Everything learned beyond the finished films, for the Eddie plan."""
+    from .cut_diff import correction_rules
+
+    corrections = store.load_corrections()
+    cards = store.load_eddie_references("card")
+    return {
+        "edit_profile": store.read_json(store.edit_profile),
+        "structure": store.read_json(store.structure_template),
+        "soundbites": store.read_json(store.soundbite_profile),
+        "corrections": correction_rules(corrections) if corrections else None,
+        "eddie_card": cards[-1] if cards else None,
+    }

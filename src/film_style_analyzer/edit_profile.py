@@ -157,7 +157,7 @@ def edit_rules(a: dict) -> list[str]:
     if (a.get("opens_with_fade_ratio") or 0) > 0.5:
         rules.append("Fade in from black at the start.")
     if (a.get("ends_with_fade_ratio") or 0) > 0.5:
-        rules.append(f"Fade out to black at the end"
+        rules.append("Fade out to black at the end"
                      + (f" over about {a['fade_sec']:.1f}s." if a.get("fade_sec") else "."))
     if a.get("music_tracks"):
         r = f"Use {a['music_tracks']:g} song(s)"
