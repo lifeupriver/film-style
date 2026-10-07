@@ -187,10 +187,76 @@ def _recipe(profile: dict, brief: str) -> dict:
     }
 
 
-def build_plan(profile: dict) -> dict:
-    """Everything an assistant needs to drive Eddie in this editor's style."""
+def _learned_brief(learned: dict) -> str:
+    """Sections for the brief from what was learned beyond the finished films."""
+    blocks = []
+    ep = learned.get("edit_profile") or {}
+    if ep.get("rules"):
+        blocks.append(f"How I build a cut (from {ep.get('project_count', 0)} of my project files):\n"
+                      + "\n".join(f"- {r}" for r in ep["rules"]))
+    st = learned.get("structure") or {}
+    if st.get("rules"):
+        blocks.append("Running order:\n" + "\n".join(f"- {r}" for r in st["rules"]))
+    sb = learned.get("soundbites") or {}
+    sb_rules = list(sb.get("rules") or [])
+    if sb.get("written_rules"):
+        sb_rules.append(sb["written_rules"].strip())
+    if sb_rules:
+        blocks.append("How I choose spoken lines (vows, letters, toasts):\n"
+                      + "\n".join(r if r.startswith("-") else f"- {r}" for r in sb_rules))
+    co = learned.get("corrections") or {}
+    if co.get("rules"):
+        blocks.append("From my corrections of earlier AI cuts:\n"
+                      + "\n".join(f"- {r}" for r in co["rules"]))
+    return "\n\n".join(blocks)
+
+
+def _visual(edit_profile: dict) -> dict | None:
+    d = (edit_profile or {}).get("decisions") or {}
+    if not d:
+        return None
+    out: dict = {}
+    if d.get("slow_motion_pct"):
+        out["slow_motion"] = {
+            "share_of_shots_pct": d["slow_motion_pct"],
+            "speed": d.get("slow_motion_speed"),
+            "how": ("Use set_speed_ramp with preset \"constant\" and rate "
+                    f"{d.get('slow_motion_speed') or 0.5:g} on about "
+                    f"{d['slow_motion_pct']:.0f}% of picture-only shots and b-roll overlays "
+                    "(never on segments carrying spoken lines)."),
+        }
+    if d.get("speed_ramps"):
+        out["speed_ramps_per_film"] = d["speed_ramps"]
+    if d.get("punch_in_pct"):
+        out["punch_in"] = {
+            "share_of_shots_pct": d["punch_in_pct"],
+            "scale": d.get("punch_in_scale"),
+            "how": ("Use crop_segments with anchor \"face\" and zoom "
+                    f"{d.get('punch_in_scale') or 1.2:g} on about {d['punch_in_pct']:.0f}% "
+                    "of segments, favouring spoken moments."),
+        }
+    if d.get("broll_coverage_pct"):
+        out["broll_coverage_pct"] = d["broll_coverage_pct"]
+        out["broll_how"] = (f"Use add_brolls so cutaways cover about "
+                            f"{d['broll_coverage_pct']:.0f}% of the running time.")
+    if d.get("head_skip_sec") is not None:
+        out["trim_into_clips"] = {"head_sec": d["head_skip_sec"], "tail_sec": d.get("tail_skip_sec")}
+    if d.get("music_tracks"):
+        out["music"] = {k: d.get(k) for k in ("music_tracks", "music_coverage_pct",
+                                              "music_starts_at_sec")}
+    return out or None
+
+
+def build_plan(profile: dict, learned: dict | None = None) -> dict:
+    """Everything an assistant needs to drive Eddie in this editor's style.
+
+    ``learned`` optionally carries what was learned beyond the finished
+    films: ``edit_profile``, ``structure``, ``soundbites``, ``corrections``
+    and ``eddie_card`` (a saved Eddie style card record).
+    """
     if not profile or not profile.get("film_count"):
         raise ValueError("style profile is empty — run `film-style guide` first")
+    learned = learned or {}
 
     duration = profile.get("duration") or {}
     trans = profile.get("transitions") or {}
@@ -200,6 +266,9 @@ def build_plan(profile: dict) -> dict:
 
     scenes = _scene_targets(profile)
     brief = _brief(profile, scenes)
+    extra = _learned_brief(learned)
+    if extra:
+        brief = (brief + "\n\n" + extra)[:BRIEF_MAX_CHARS]
 
     build: dict = {"brief": brief}
     med = _minutes(duration.get("target_median_sec"))
@@ -209,19 +278,28 @@ def build_plan(profile: dict) -> dict:
         if lo and lo >= med * 0.5:
             build["minimumDurationMinutes"] = lo
 
+    decisions = (learned.get("edit_profile") or {}).get("decisions") or {}
     fade_out = (closing.get("fade_to_black_ratio") or 0) > 0.5
+    if decisions.get("ends_with_fade_ratio") is not None:
+        fade_out = decisions["ends_with_fade_ratio"] > 0.5
+    fade_in = (decisions.get("opens_with_fade_ratio") or 0) > 0.5
+    dissolve_sec = decisions.get("dissolve_sec")
     transitions = {
+        "fade_in_at_start": fade_in,
         "fade_out_at_end": fade_out,
-        "dissolves_per_film": trans.get("avg_dissolves_per_film"),
+        "fade_duration_sec": decisions.get("fade_sec"),
+        "dissolves_per_film": decisions.get("dissolves") or trans.get("avg_dissolves_per_film"),
         "dissolve_pct": trans.get("dissolve_pct"),
-        "dissolve_duration_sec": DEFAULT_DISSOLVE_SEC,
-        "dissolve_duration_measured": False,
+        "dissolve_duration_sec": dissolve_sec or DEFAULT_DISSOLVE_SEC,
+        "dissolve_duration_measured": bool(dissolve_sec),
         "how": ("After the build, read the segments with get_edit(format=\"segments\"). "
+                + ("Set a fade in on the first segment. " if fade_in else "")
                 + ("Set a fade out on the last segment. " if fade_out else "")
-                + (f"Place about {trans['avg_dissolves_per_film']:.0f} dissolves, "
+                + (f"Place about {(decisions.get('dissolves') or trans['avg_dissolves_per_film']):.0f} "
+                   f"dissolves of {dissolve_sec or DEFAULT_DISSOLVE_SEC:g}s, "
                    "preferring boundaries between parts of the day; every other "
                    "boundary stays a hard cut."
-                   if trans.get("avg_dissolves_per_film") else
+                   if (decisions.get("dissolves") or trans.get("avg_dissolves_per_film")) else
                    "Keep every boundary a hard cut.")),
     }
 
@@ -243,6 +321,24 @@ def build_plan(profile: dict) -> dict:
     ]
     if not music.get("present"):
         notes.append("No music analysis in the archive; beat snapping is off.")
+    if not learned.get("edit_profile"):
+        notes.append("No project files learned yet. Run `film-style add-project` on past "
+                     "timelines, then `learn-edits`, to add trims, b-roll, slow motion, "
+                     "punch-ins and measured transition lengths.")
+    if not learned.get("soundbites"):
+        notes.append("No spoken-line learning yet. Run `film-style learn-soundbites`.")
+
+    card = learned.get("eddie_card")
+    apply_style = {
+        "style": words,
+        "plan": {"mode": "plan", "style": words},
+        "save": {"mode": "save", "style": words, "saveName": look_name},
+    }
+    if card:
+        apply_style["card"] = card.get("data")
+        apply_style["card_name"] = card.get("name")
+        apply_style["plan_with_card"] = {"mode": "plan", "card": card.get("data")}
+    sb = learned.get("soundbites") or {}
 
     return {
         "schema_version": PLAN_SCHEMA_VERSION,
@@ -253,21 +349,31 @@ def build_plan(profile: dict) -> dict:
         "transitions": transitions,
         "beats": beats,
         "grade": _grade(profile.get("color") or {}),
-        "apply_style": {
-            "style": words,
-            "plan": {"mode": "plan", "style": words},
-            "save": {"mode": "save", "style": words, "saveName": look_name},
-        },
+        "apply_style": apply_style,
+        "structure": (learned.get("structure") or {}).get("sections") or None,
+        "visual": _visual(learned.get("edit_profile") or {}),
+        "soundbites": ({"stats": sb.get("stats"), "rules": sb.get("rules"),
+                        "written_rules": sb.get("written_rules"),
+                        "examples": "call get_soundbite_examples"} if sb else None),
+        "corrections": (learned.get("corrections") or {}).get("rules") or None,
         "recipe": _recipe(profile, brief),
         "workflow": [
-            "list_sources: confirm the footage is imported.",
+            "get_reference_film: pick the past film closest to this wedding "
+            "(venue, season, or a film named by the editor) and follow its sections.",
+            "list_sources and get_transcript: read the vows, letters and toasts.",
+            "get_soundbite_examples: see which lines this editor keeps, then "
+            "choose lines the same way.",
             "create_edit_result: pass `brief` and the duration fields from "
-            "create_edit_result; pick soundbites, or use get_eddie_selects.",
+            "create_edit_result, soundbites in the running order from `structure`; "
+            "add picture selects from get_eddie_selects.",
+            "add_brolls, set_speed_ramp, crop_segments: follow `visual`.",
             "set_transitions: follow transitions.how.",
             "snap_cuts_to_beats: only if beats.snap is true.",
             "grade_edit: optional starting grade from grade.grade_edit.",
             "export_edit (fcpxml or otio), then compare_timeline on the file; "
             "trim or extend the shots listed in shot_deviations.",
+            "When the editor fixes the cut, run learn_correction on Eddie's "
+            "export and their fixed timeline so the next build improves.",
         ],
         "notes": notes,
     }

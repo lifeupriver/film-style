@@ -462,10 +462,11 @@ def tool_compare_fcpxml(fcpxml_content: str | None = None,
 def tool_get_eddie_plan() -> dict[str, Any]:
     """Style profile translated into arguments for Eddie's editing tools."""
     from .eddie import build_plan
+    from .learning_store import load_learned
 
     profile = tool_get_style_profile()
     try:
-        return build_plan(profile)
+        return build_plan(profile, load_learned(_store()))
     except ValueError as e:
         raise MCPServerError(str(e)) from e
 
@@ -482,6 +483,193 @@ def tool_get_eddie_selects(scores_path: str, min_score: int = 70,
         raise MCPServerError(f"no clip-scores.json at {p} — run `film-style score-clips` first")
     return selects_from_scores(json.loads(p.read_text()), min_score=min_score,
                                use_original_names=use_original_names)
+
+
+# ---------------------------------------------------------------------------
+# Learning from project files, transcripts and corrections
+# ---------------------------------------------------------------------------
+
+def _store():
+    from .learning_store import Store
+    return Store(_GENRE_ROOT)
+
+
+def _timeline_from(path: str | None, content: str | None, label: str) -> dict:
+    """Parse a project timeline given as a path or as file text."""
+    import tempfile
+    from .edit_decisions import parse_project
+
+    if path:
+        p = Path(path).expanduser()
+        if not p.exists():
+            raise MCPServerError(f"{label}: file not found: {p}")
+    elif content:
+        suffix = ".otio" if content.lstrip().startswith("{") else ".fcpxml"
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False, mode="w") as tmp:
+            tmp.write(content)
+            p = Path(tmp.name)
+    else:
+        raise MCPServerError(f"{label}: provide a path or the file content")
+    try:
+        return parse_project(p)
+    except (ValueError, OSError) as e:
+        raise MCPServerError(f"{label}: {e}") from e
+    finally:
+        if content and not path:
+            p.unlink(missing_ok=True)
+
+
+def tool_add_project(path: str, film_stem: str | None = None,
+                     name: str | None = None) -> dict[str, Any]:
+    project = _timeline_from(path, None, "project")
+    out = _store().save_project(project, name=name, film_stem=film_stem, source_path=path)
+    video = [e for e in project["events"] if e["track"] == "video"]
+    return {"saved": str(out), "name": project["name"], "duration_sec": project["duration_sec"],
+            "video_clips": len(video), "sources": len({e["source_key"] for e in video}),
+            "transitions": len(project["transitions"]), "markers": len(project["markers"])}
+
+
+def tool_learn_edits() -> dict[str, Any]:
+    from .edit_profile import build_edit_profile
+    from .structure import build_structure_template
+
+    store = _store()
+    records = store.load_projects()
+    films = _load_all_films()
+    if not records and not films:
+        raise MCPServerError("nothing to learn from — add projects or analyse films first")
+    out: dict[str, Any] = {}
+    if records:
+        profile = build_edit_profile([r["project"] for r in records])
+        store.write_json(store.edit_profile, profile)
+        out["edit_profile"] = {"projects": profile["project_count"],
+                               "decisions": profile["decisions"], "rules": profile["rules"]}
+    template = build_structure_template(films, records)
+    store.write_json(store.structure_template, template)
+    out["structure"] = {"films": template["films_with_sections"],
+                        "sections": template["sections"], "rules": template["rules"]}
+    return out
+
+
+def tool_save_transcript(source: str, transcript: dict) -> dict[str, Any]:
+    from .edit_decisions import source_key
+    from .soundbites import normalize_transcript
+
+    segs = normalize_transcript(transcript)
+    if not segs:
+        raise MCPServerError("transcript has no segments with start, end and text")
+    key = source_key(source)
+    if not key:
+        raise MCPServerError("source name is empty")
+    out = _store().save_transcript(key, {"segments": [
+        {"start_sec": s["start"], "end_sec": s["end"], "text": s["text"], "speaker": s["speaker"]}
+        for s in segs]})
+    return {"saved": str(out), "source_key": key, "segments": len(segs)}
+
+
+def tool_learn_soundbites(write_rules: bool = False) -> dict[str, Any]:
+    from .config import load as load_config
+    from .soundbites import build_soundbite_profile, write_soundbite_rules
+
+    store = _store()
+    records = store.load_projects()
+    if not records:
+        raise MCPServerError("no projects registered — call add_project first")
+    profile = build_soundbite_profile(records, store.load_transcripts())
+    if not profile["stats"]["sources_with_speech"]:
+        raise MCPServerError(
+            "no transcript matched a spoken source in the registered projects. Save "
+            "transcripts with save_transcript (for example from Eddie's get_transcript), "
+            "or run `film-style learn-soundbites --transcribe`.")
+    if write_rules:
+        cfg = load_config()
+        profile["written_rules"] = write_soundbite_rules(
+            profile, model=cfg.anthropic_model, backend=cfg.claude_backend)
+    store.write_json(store.soundbite_profile, profile)
+    return {"stats": profile["stats"], "rules": profile["rules"],
+            "written_rules": profile["written_rules"],
+            "openers": profile["openers"], "closers": profile["closers"]}
+
+
+def tool_get_soundbite_examples(max_sources: int = 8, max_lines: int = 80) -> dict[str, Any]:
+    store = _store()
+    profile = store.read_json(store.soundbite_profile)
+    if not profile:
+        raise MCPServerError("no soundbite profile — call learn_soundbites first")
+    examples = []
+    for ex in profile["examples"][:max_sources]:
+        examples.append({**ex, "lines": [
+            {"text": l["text"], "kept": l["kept"], "speaker": l["speaker"]}
+            for l in ex["lines"][:max_lines]]})
+    return {"stats": profile["stats"], "rules": profile["rules"],
+            "written_rules": profile.get("written_rules"),
+            "openers": profile["openers"], "closers": profile["closers"],
+            "examples": examples}
+
+
+def tool_get_structure_template() -> dict[str, Any]:
+    store = _store()
+    t = store.read_json(store.structure_template)
+    if not t:
+        from .structure import build_structure_template
+        t = build_structure_template(_load_all_films(), store.load_projects())
+    return t
+
+
+def tool_get_reference_film(like: str | None = None, metadata: dict | None = None,
+                            top: int = 3) -> dict[str, Any]:
+    from .structure import find_reference_films
+
+    if not like and not metadata:
+        raise MCPServerError("give `like` (a film stem) and/or `metadata` (e.g. {\"venue\": \"...\"})")
+    store = _store()
+    try:
+        refs = find_reference_films(
+            _load_all_films(), like=_safe_stem(like) if like else None,
+            metadata=metadata, top=top, projects=store.load_projects(),
+            soundbite_profile=store.read_json(store.soundbite_profile))
+    except ValueError as e:
+        raise MCPServerError(str(e)) from e
+    return {"references": refs}
+
+
+def tool_evaluate_cut(reference_path: str | None = None, candidate_path: str | None = None,
+                      reference_content: str | None = None,
+                      candidate_content: str | None = None) -> dict[str, Any]:
+    from .cut_diff import evaluate
+
+    return evaluate(_timeline_from(reference_path, reference_content, "reference"),
+                    _timeline_from(candidate_path, candidate_content, "candidate"))
+
+
+def tool_learn_correction(before_path: str | None = None, after_path: str | None = None,
+                          before_content: str | None = None, after_content: str | None = None,
+                          note: str = "") -> dict[str, Any]:
+    from .cut_diff import correction, correction_rules
+
+    store = _store()
+    record = correction(_timeline_from(before_path, before_content, "before"),
+                        _timeline_from(after_path, after_content, "after"), note=note)
+    store.append_correction(record)
+    return {"summary": record["summary"],
+            "learned": correction_rules(store.load_corrections())}
+
+
+def tool_save_eddie_reference(kind: str, data: dict, name: str,
+                              film_stem: str | None = None) -> dict[str, Any]:
+    if kind not in ("shot_list", "card"):
+        raise MCPServerError("kind must be \"shot_list\" or \"card\"")
+    if not isinstance(data, dict) or not data:
+        raise MCPServerError("data must be a non-empty JSON object")
+    out = _store().save_eddie_reference(kind, data, name,
+                                        _safe_stem(film_stem) if film_stem else None)
+    return {"saved": str(out)}
+
+
+def tool_list_eddie_references(kind: str | None = None) -> dict[str, Any]:
+    return {"references": [
+        {k: r.get(k) for k in ("kind", "name", "film_stem", "saved_at")}
+        for r in _store().load_eddie_references(kind)]}
 
 
 # ---------------------------------------------------------------------------
@@ -1511,6 +1699,94 @@ def build_server():
         sourceId (file name), in/out seconds of the usable range, and a
         reason. scores_path is the clip-scores.json file or its folder."""
         return tool_get_eddie_selects(scores_path, min_score, use_original_names)
+
+    @mcp.tool()
+    def add_project(path: str, film_stem: str | None = None, name: str | None = None) -> dict:
+        """Register one of the editor's own project timelines (.fcpxml,
+        .fcpxmld or .otio) so their edit decisions can be learned: which
+        camera file each shot came from and where in it, speed, framing,
+        transitions, music and section markers. film_stem links it to the
+        analysed finished film it produced."""
+        return tool_add_project(path, film_stem, name)
+
+    @mcp.tool()
+    def learn_edits() -> dict:
+        """Learn from every registered project: how much of each clip is kept,
+        where shots start in their clip, b-roll coverage, slow motion,
+        punch-ins, measured transition lengths, music; and the running order
+        of sections across films. Returns the learned rules."""
+        return tool_learn_edits()
+
+    @mcp.tool()
+    def save_transcript(source: str, transcript: dict) -> dict:
+        """Store a transcript of one raw source file (for example the result
+        of Eddie's get_transcript for that source) so spoken-line choices can
+        be learned. source is the file name; transcript has `segments` with
+        start/end seconds (from the start of the file), text and speaker."""
+        return tool_save_transcript(source, transcript)
+
+    @mcp.tool()
+    def learn_soundbites(write_rules: bool = False) -> dict:
+        """Mark every transcript line kept or cut by matching it against the
+        audio the editor actually used, and learn how lines are chosen. With
+        write_rules, Claude also writes the selection rules in words."""
+        return tool_learn_soundbites(write_rules)
+
+    @mcp.tool()
+    def get_soundbite_examples(max_sources: int = 8, max_lines: int = 80) -> dict:
+        """The editor's past speeches and vows with each line marked kept or
+        cut, plus the learned rules and the lines that opened and closed
+        their films. Read before choosing soundbites for a new film."""
+        return tool_get_soundbite_examples(max_sources, max_lines)
+
+    @mcp.tool()
+    def get_structure_template() -> dict:
+        """The editor's usual running order: which sections appear, where each
+        starts and ends as a share of the film, how films open and close."""
+        return tool_get_structure_template()
+
+    @mcp.tool()
+    def get_reference_film(like: str | None = None, metadata: dict | None = None,
+                           top: int = 3) -> dict:
+        """The past films to imitate for a new one, chosen by style similarity
+        to `like` (a film stem) and/or shared metadata such as
+        {"venue": "...", "season": "fall"}. Each comes with its sections,
+        pacing, its project's edit decisions and its kept lines when known."""
+        return tool_get_reference_film(like, metadata, top)
+
+    @mcp.tool()
+    def evaluate_cut(reference_path: str | None = None, candidate_path: str | None = None,
+                     reference_content: str | None = None,
+                     candidate_content: str | None = None) -> dict:
+        """Score a cut (e.g. Eddie's export) against the editor's own cut of
+        the same footage, 0-100: same moments, same spoken lines, same order,
+        same pacing. Lists what was missed and what was added. Each timeline
+        is FCPXML or OTIO, as a path or as file content."""
+        return tool_evaluate_cut(reference_path, candidate_path,
+                                 reference_content, candidate_content)
+
+    @mcp.tool()
+    def learn_correction(before_path: str | None = None, after_path: str | None = None,
+                         before_content: str | None = None, after_content: str | None = None,
+                         note: str = "") -> dict:
+        """Record how the editor fixed a cut (before = e.g. Eddie's export,
+        after = their corrected timeline) and return the rules all
+        corrections so far add up to. Those rules go into the Eddie plan."""
+        return tool_learn_correction(before_path, after_path, before_content,
+                                     after_content, note)
+
+    @mcp.tool()
+    def save_eddie_reference(kind: str, data: dict, name: str,
+                             film_stem: str | None = None) -> dict:
+        """Keep something Eddie produced about one of the editor's films:
+        kind "shot_list" (from analyze_reference_shots) or "card" (a style
+        card for apply_style). The newest card is offered in the Eddie plan."""
+        return tool_save_eddie_reference(kind, data, name, film_stem)
+
+    @mcp.tool()
+    def list_eddie_references(kind: str | None = None) -> dict:
+        """List saved Eddie shot lists and style cards."""
+        return tool_list_eddie_references(kind)
 
     @mcp.tool()
     def predict_cuts(song_path: str, target_duration_sec: float | None = None,

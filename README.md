@@ -252,6 +252,13 @@ and writes labels back via `set_chapter_labels_bulk`. Same flow for
 | `score-clips <path>` | Score raw footage against `shot-profile.json`; optional trim detection |
 | `eddie-plan` | Translate the style profile into settings for the Eddie video editor (see [Working with Eddie](#working-with-eddie)) |
 | `eddie-selects <clip-scores.json>` | Turn scored raw clips into soundbites for Eddie's `create_edit_result` |
+| `add-project <timeline>` | Register one of your own project timelines (`.fcpxml`, `.fcpxmld`, `.otio`) to learn your edit decisions from |
+| `learn-edits` | Learn edit decisions and your running order from registered projects and labelled films |
+| `learn-soundbites` | Learn which spoken lines you keep, from raw-source transcripts (`--transcripts`, `--transcribe`, `--write-rules`) |
+| `reference-film` | Find the past films to imitate for a new wedding (`--like STEM`, `--set venue=…`) |
+| `evaluate <yours> <theirs>` | Score a cut of the same footage (e.g. Eddie's) against your own, 0–100 |
+| `learn-correction <before> <after>` | Learn from how you fixed a cut |
+| `eddie-reference add/list` | Keep Eddie's shot lists and style cards of your films |
 | `export-notebooklm` | Write a NotebookLM-ingestible markdown brief |
 | `serve` | Boot the dashboard at http://127.0.0.1:7421 |
 | `mcp-serve` | Run the MCP server (for Claude Desktop) |
@@ -326,6 +333,8 @@ Restart Claude Desktop. The toolset shows up under the connections menu.
 
 **Eddie** — `get_eddie_plan`, `get_eddie_selects` (see [Working with Eddie](#working-with-eddie))
 
+**Learn how you edit** — `add_project`, `learn_edits`, `save_transcript`, `learn_soundbites`, `get_soundbite_examples`, `get_structure_template`, `get_reference_film`, `evaluate_cut`, `learn_correction`, `save_eddie_reference`, `list_eddie_references` (see [Teach it how you edit](#teach-it-how-you-edit))
+
 **Resources** auto-loadable as conversation context:
 - `film-style://profile` — typed style-profile.json
 - `film-style://guide` — markdown style guide
@@ -398,6 +407,85 @@ and compare it against my style. Fix the shots that are off pace."*
 
 Nothing here calls Eddie itself, and Eddie charges credits for some of its
 tools (exports, renders, reference analysis).
+
+---
+
+## Teach it how you edit
+
+The finished films show what you ended up with. Your project files and raw
+footage show the decisions behind them, and that is what makes a cut look
+like yours. Three to five past weddings where you still have the project and
+the raw files are enough to start.
+
+**1. Your project files.** Export each past project's timeline (Final Cut:
+File → Export XML; DaVinci Resolve: export the timeline as FCPXML or OTIO;
+any tool that writes OTIO works too) and register it, linked to its finished
+film if you analysed that. Premiere's older XML format (xmeml) is not read
+yet:
+
+```bash
+film-style add-project ~/Exports/smith-highlight.fcpxml --film smith-highlight
+film-style learn-edits
+```
+
+`learn-edits` measures how much of each chosen clip you keep and where in it
+you start, how much b-roll covers the audio, slow motion and speed ramps,
+punch-ins, your real dissolve and fade lengths, and how you lay music. It also
+builds your **running order** (`structure-template.json`) from section
+markers in your projects and from the chapter labels `guide --vision` gives
+your films.
+
+**2. Your spoken lines.** For each speech, vow or letter you used, a
+transcript of the raw recording is matched against the audio you kept, so
+every line is marked kept or cut. Supply transcripts with
+`--transcripts <folder>` (WhisperX JSON or any `segments` with start/end/text),
+run `--transcribe` to make them locally (needs the `[audio]` extra and the raw
+files; `--media-root` finds moved files), or have Claude save Eddie's own
+transcripts with `save_transcript`. `--write-rules` asks Claude to put your
+choices into words.
+
+```bash
+film-style learn-soundbites --transcribe --media-root /Volumes/Weddings --write-rules
+```
+
+**3. Imitate a past film.** `reference-film --like smith-highlight` or
+`--set venue=Mohonk --set season=fall` finds the closest past films and
+returns their sections, pacing, project decisions and kept lines.
+
+**4. Measure how close a cut gets.** Pick a wedding you have already
+delivered. Have Eddie cut it from the same footage, export it, and score it
+against yours:
+
+```bash
+film-style evaluate ~/Exports/smith-highlight.fcpxml ~/Downloads/eddie-smith.otio
+```
+
+The score (0–100) weighs the same moments (35%), the same spoken lines (25%),
+the same order (20%) and the same pacing (20%), and it lists what Eddie left
+out. Files are matched by name, so proxies (`A001_proxy.mp4`) match
+originals (`A001.MOV`).
+
+**5. Learn from your fixes.** When you correct an Eddie cut, record it:
+
+```bash
+film-style learn-correction ~/Downloads/eddie-v1.otio ~/Exports/my-fix.fcpxml
+```
+
+Corrections add up to rules (for example "you shortened the cut by about
+20%", "you end shots 2s earlier") that go into every later Eddie plan.
+
+**6. Eddie's view of your films.** After running Eddie's
+`analyze_reference_shots` on a few of your films (Eddie charges credits),
+save its shot lists and any style card with `save_eddie_reference` or
+`film-style eddie-reference add`. The newest card is offered to
+`apply_style` in the plan.
+
+Everything learned feeds `eddie-plan` / `get_eddie_plan`: the brief carries
+your edit, running-order, spoken-line and correction rules; transitions use
+your measured lengths; a `visual` block says how to use `add_brolls`,
+`set_speed_ramp` and `crop_segments`; the workflow starts from a reference
+film and your soundbite examples and ends with `evaluate_cut` and
+`learn_correction`.
 
 ---
 

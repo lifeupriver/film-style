@@ -231,3 +231,39 @@ def test_get_eddie_selects_reads_folder(fixture_home, tmp_path):
         {"file": "/c/A.mov", "score": 80, "duration_sec": 5}]}))
     out = mcp_server.tool_get_eddie_selects(str(tmp_path))
     assert out["kept"] == 1
+
+
+def test_learning_tools_end_to_end(fixture_home):
+    from pathlib import Path as _P
+    _, mcp_server = fixture_home
+    fixture = str(_P(__file__).parent / "fixtures" / "wedding_project.fcpxml")
+
+    added = mcp_server.tool_add_project(fixture, film_stem="smith")
+    assert added["video_clips"] == 3 and added["markers"] == 2
+
+    learned = mcp_server.tool_learn_edits()
+    assert learned["edit_profile"]["decisions"]["dissolve_sec"] == 2.0
+    assert [s["label"] for s in learned["structure"]["sections"]] == ["ceremony", "reception"]
+
+    with pytest.raises(mcp_server.MCPServerError):
+        mcp_server.tool_learn_soundbites()
+    saved = mcp_server.tool_save_transcript("A001_vows.MOV", {"segments": [
+        {"start": 12, "end": 20, "text": "You make every day feel like home."},
+        {"start": 40, "end": 45, "text": "Is the mic on?"}]})
+    assert saved["source_key"] == "a001vows"
+    sb = mcp_server.tool_learn_soundbites()
+    assert sb["stats"]["keep_rate_pct"] == 50.0
+    ex = mcp_server.tool_get_soundbite_examples()
+    assert [l["kept"] for l in ex["examples"][0]["lines"]] == [True, False]
+
+    ev = mcp_server.tool_evaluate_cut(reference_path=fixture, candidate_path=fixture)
+    assert ev["score"] == 100.0
+    corr = mcp_server.tool_learn_correction(before_path=fixture, after_path=fixture)
+    assert corr["learned"]["corrections"] == 1
+
+    mcp_server.tool_save_eddie_reference("card", {"pace": "slow"}, "my look")
+    assert mcp_server.tool_list_eddie_references("card")["references"][0]["name"] == "my-look"
+    with pytest.raises(mcp_server.MCPServerError):
+        mcp_server.tool_save_eddie_reference("other", {"a": 1}, "x")
+    with pytest.raises(mcp_server.MCPServerError):
+        mcp_server.tool_get_reference_film()
