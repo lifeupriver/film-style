@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 
+from .config import DEFAULT_ANTHROPIC_MODEL
 from .genre_pack import GenrePack
 
 
@@ -35,7 +36,7 @@ def _encode(path: Path) -> dict:
 def classify_chapters(
     thumbnail_paths: list[Path],
     pack: GenrePack,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = DEFAULT_ANTHROPIC_MODEL,
     examples: list[tuple[Path, str]] | None = None,
     max_examples: int = 6,
 ) -> list[str]:
@@ -100,7 +101,8 @@ def classify_chapters(
         try:
             msg = client.messages.create(
                 model=model,
-                max_tokens=1024,
+                max_tokens=8192,
+                output_config={"effort": "low"},
                 system=system_prompt,
                 messages=[
                     *example_msgs,

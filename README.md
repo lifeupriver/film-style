@@ -140,10 +140,17 @@ brew install ffmpeg
 
 ### Core install
 
+**Use Python 3.12.** The core tool runs on 3.11 and newer, but the `[audio]`
+and `[shots]` extras depend on WhisperX, MediaPipe and TensorFlow builds that
+are not published for Python 3.13 yet. A virtual environment keeps them away
+from your system Python:
+
 ```bash
+brew install ffmpeg python@3.12          # macOS
 git clone https://github.com/lifeupriver/film-style.git
 cd film-style
-pip install -e . --break-system-packages
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e .
 ```
 
 ### Optional extras

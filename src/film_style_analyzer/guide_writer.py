@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 
+from .config import DEFAULT_ANTHROPIC_MODEL
 from .genre_pack import GenrePack
 
 
@@ -20,7 +21,7 @@ def build_system_prompt(pack: GenrePack) -> str:
 def write_guide(
     stats: dict,
     pack: GenrePack,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = DEFAULT_ANTHROPIC_MODEL,
     backend: str = "api",
 ) -> str:
     n = stats.get("film_count", 0)
@@ -50,7 +51,7 @@ def write_guide(
     client = Anthropic(api_key=api_key)
     msg = client.messages.create(
         model=model,
-        max_tokens=4096,
+        max_tokens=16000,
         system=system,
         messages=[{"role": "user", "content": user}],
     )

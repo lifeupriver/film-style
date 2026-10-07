@@ -1,7 +1,12 @@
 import json
 from pathlib import Path
 
-from film_style_analyzer.config import Config, load, write_default
+from film_style_analyzer.config import (
+    DEFAULT_ANTHROPIC_MODEL,
+    Config,
+    load,
+    write_default,
+)
 
 
 def test_load_defaults_when_missing(tmp_path: Path):
@@ -32,3 +37,12 @@ def test_write_default(tmp_path: Path):
     assert p.exists()
     data = json.loads(p.read_text())
     assert data["whisper_model"] == "large-v3"
+
+
+def test_saved_old_default_model_is_upgraded(tmp_path: Path):
+    p = tmp_path / "config.json"
+    p.write_text(json.dumps({"anthropic_model": "claude-sonnet-4-20250514"}))
+    assert load(p).anthropic_model == DEFAULT_ANTHROPIC_MODEL
+
+    p.write_text(json.dumps({"anthropic_model": "my-custom-model"}))
+    assert load(p).anthropic_model == "my-custom-model"

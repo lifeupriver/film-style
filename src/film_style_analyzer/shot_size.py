@@ -15,6 +15,7 @@ import json
 import os
 from pathlib import Path
 
+from .config import DEFAULT_ANTHROPIC_MODEL
 from .genre_pack import GenrePack
 
 # Canonical shot-size taxonomy. All shipped genre packs use this same list,
@@ -53,7 +54,7 @@ def _encode_image(path: Path) -> dict:
 def classify_shots(
     thumbnail_paths: list[Path],
     pack: GenrePack,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = DEFAULT_ANTHROPIC_MODEL,
     batch_size: int = 16,
 ) -> list[str]:
     """Returns one label per thumbnail, in input order. Missing files → 'other'."""
@@ -86,7 +87,8 @@ def classify_shots(
         try:
             msg = client.messages.create(
                 model=model,
-                max_tokens=1024,
+                max_tokens=8192,
+                output_config={"effort": "low"},
                 system=system_prompt,
                 messages=[{"role": "user", "content": content}],
             )
