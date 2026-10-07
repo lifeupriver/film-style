@@ -202,3 +202,32 @@ def test_predict_cuts_validates_song_exists(fixture_home):
     _, mcp_server = fixture_home
     with pytest.raises(mcp_server.MCPServerError):
         mcp_server.tool_predict_cuts("/nonexistent/path/song.mp3")
+
+
+def test_compare_timeline_accepts_otio(fixture_home):
+    _, mcp_server = fixture_home
+    _write_analysis(mcp_server, "demo-a")
+    rt = lambda s: {"OTIO_SCHEMA": "RationalTime.1", "rate": 24, "value": s * 24}
+    otio = {"OTIO_SCHEMA": "Timeline.1", "tracks": {"OTIO_SCHEMA": "Stack.1", "children": [
+        {"OTIO_SCHEMA": "Track.1", "kind": "Video", "children": [
+            {"OTIO_SCHEMA": "Clip.2", "name": n,
+             "source_range": {"OTIO_SCHEMA": "TimeRange.1",
+                              "start_time": rt(0), "duration": rt(d)}}
+            for n, d in [("a", 3), ("b", 12), ("c", 3)]]}]}}
+    out = mcp_server.tool_compare_timeline(content=json.dumps(otio))
+    assert out["cut"]["format"] == "otio"
+    assert out["shot_deviations"][0]["name"] == "b"
+
+
+def test_get_eddie_plan_requires_profile(fixture_home):
+    _, mcp_server = fixture_home
+    with pytest.raises(mcp_server.MCPServerError):
+        mcp_server.tool_get_eddie_plan()
+
+
+def test_get_eddie_selects_reads_folder(fixture_home, tmp_path):
+    _, mcp_server = fixture_home
+    (tmp_path / "clip-scores.json").write_text(json.dumps({"clips": [
+        {"file": "/c/A.mov", "score": 80, "duration_sec": 5}]}))
+    out = mcp_server.tool_get_eddie_selects(str(tmp_path))
+    assert out["kept"] == 1

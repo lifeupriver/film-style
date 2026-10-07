@@ -422,39 +422,66 @@ def tool_set_chapter_label(stem: str, chapter_index: int,
     }
 
 
-def tool_compare_fcpxml(fcpxml_content: str | None = None,
-                        fcpxml_path: str | None = None) -> dict[str, Any]:
-    """Compare a rough-cut FCPXML against the established style profile.
+def tool_compare_timeline(content: str | None = None,
+                          path: str | None = None) -> dict[str, Any]:
+    """Compare an edited timeline against the established style profile.
 
-    Pass either fcpxml_content (the XML as a string) OR fcpxml_path (a
-    filesystem path). Returns a deviation report with per-decile pacing
-    drift and concrete suggestions.
+    Accepts FCPXML (Final Cut, DaVinci Resolve, Eddie's fcpxml export) or
+    OpenTimelineIO (.otio, Eddie's otio export). Pass either ``content`` (the
+    file's text) or ``path``. Returns overall deltas, per-decile pacing drift,
+    ``shot_deviations`` (each shot that runs long or short for its point in
+    the film, with timeline timecodes) and suggestions.
     """
-    import tempfile
-    from .fcpxml_parser import parse as parse_fcpxml
-    from .server import _build_compare_report
+    from .compare import build_report
+    from .timeline import load_timeline, load_timeline_content
 
-    if not fcpxml_content and not fcpxml_path:
-        raise MCPServerError("provide either fcpxml_content or fcpxml_path")
-    if fcpxml_content:
-        with tempfile.NamedTemporaryFile(suffix=".fcpxml", delete=False, mode="w") as tmp:
-            tmp.write(fcpxml_content)
-            tmp_path = Path(tmp.name)
-        try:
-            cut = parse_fcpxml(tmp_path)
-        finally:
-            try:
-                tmp_path.unlink()
-            except OSError:
-                pass
+    if not content and not path:
+        raise MCPServerError("provide either content or path")
+    if content:
+        cut = load_timeline_content(content)
     else:
-        p = Path(fcpxml_path).expanduser()
+        p = Path(path).expanduser()
         if not p.is_file():
             raise MCPServerError(f"file not found: {p}")
-        cut = parse_fcpxml(p)
+        try:
+            cut = load_timeline(p)
+        except ValueError as e:
+            raise MCPServerError(str(e)) from e
 
-    profile = tool_get_aggregate_stats()
-    return _build_compare_report(cut, profile)
+    return build_report(cut, tool_get_aggregate_stats())
+
+
+def tool_compare_fcpxml(fcpxml_content: str | None = None,
+                        fcpxml_path: str | None = None) -> dict[str, Any]:
+    """Compare a rough-cut FCPXML against the established style profile."""
+    if not fcpxml_content and not fcpxml_path:
+        raise MCPServerError("provide either fcpxml_content or fcpxml_path")
+    return tool_compare_timeline(fcpxml_content, fcpxml_path)
+
+
+def tool_get_eddie_plan() -> dict[str, Any]:
+    """Style profile translated into arguments for Eddie's editing tools."""
+    from .eddie import build_plan
+
+    profile = tool_get_style_profile()
+    try:
+        return build_plan(profile)
+    except ValueError as e:
+        raise MCPServerError(str(e)) from e
+
+
+def tool_get_eddie_selects(scores_path: str, min_score: int = 70,
+                           use_original_names: bool = False) -> dict[str, Any]:
+    """clip-scores.json turned into soundbites for Eddie's create_edit_result."""
+    from .eddie import selects_from_scores
+
+    p = Path(scores_path).expanduser()
+    if p.is_dir():
+        p = p / "clip-scores.json"
+    if not p.is_file():
+        raise MCPServerError(f"no clip-scores.json at {p} — run `film-style score-clips` first")
+    return selects_from_scores(json.loads(p.read_text()), min_score=min_score,
+                               use_original_names=use_original_names)
 
 
 # ---------------------------------------------------------------------------
@@ -1452,6 +1479,38 @@ def build_server():
         """Compare a rough-cut FCPXML against the established profile.
         Provide either the XML content or a filesystem path."""
         return tool_compare_fcpxml(fcpxml_content, fcpxml_path)
+
+    @mcp.tool()
+    def compare_timeline(content: str | None = None,
+                         path: str | None = None) -> dict:
+        """Score an edited timeline against the editor's style profile.
+        Accepts FCPXML or OpenTimelineIO (e.g. an Eddie export_edit in
+        fcpxml or otio format). Returns per-decile pacing drift and
+        shot_deviations: each shot that runs long or short for its point in
+        the film, with timeline start/end seconds, so the matching segment
+        can be trimmed or extended in the editing tool."""
+        return tool_compare_timeline(content, path)
+
+    @mcp.tool()
+    def get_eddie_plan() -> dict:
+        """The editor's style profile translated into arguments for the Eddie
+        video editor's tools: create_edit_result (brief, target and floor
+        length), set_transitions (fade out, dissolve count), snap_cuts_to_beats
+        (whether to snap), grade_edit (a gentle starting grade), apply_style
+        (a 300-character description of the look, to preview or save as a
+        workspace look) and create_recipe (a reusable prompt template). Also
+        per-scene shot-length targets and an ordered workflow. Read this
+        before building an edit in Eddie."""
+        return tool_get_eddie_plan()
+
+    @mcp.tool()
+    def get_eddie_selects(scores_path: str, min_score: int = 70,
+                          use_original_names: bool = False) -> dict:
+        """Raw clips scored by `film-style score-clips`, filtered to the
+        keepers and shaped as soundbites for Eddie's create_edit_result:
+        sourceId (file name), in/out seconds of the usable range, and a
+        reason. scores_path is the clip-scores.json file or its folder."""
+        return tool_get_eddie_selects(scores_path, min_score, use_original_names)
 
     @mcp.tool()
     def predict_cuts(song_path: str, target_duration_sec: float | None = None,

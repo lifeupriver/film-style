@@ -45,7 +45,7 @@ vimeo = [
     "yt-dlp>=2024.5.0",
 ]
 mcp = [
-    "mcp>=1.0",
+    "mcp>=1.0,<2",  # 2.x renamed FastMCP; mcp_server.py targets the 1.x API
 ]
 shots = [
     "mediapipe>=0.10,<0.10.21",

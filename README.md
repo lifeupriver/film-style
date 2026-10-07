@@ -244,12 +244,14 @@ and writes labels back via `set_chapter_labels_bulk`. Same flow for
 | `guide` | Aggregate analyses, optionally run vision passes, write `style-guide.md` + `style-profile.json` |
 | `stats` | Quick stats summary of the analyzed corpus |
 | `list` | Table of every analyzed film with feature flags |
-| `compare <fcpxml>` | Score a rough cut against the profile and suggest fixes |
+| `compare <timeline>` | Score a rough cut (`.fcpxml` or `.otio`) against the profile: overall drift, decile pacing, and each shot that runs long or short |
 | `match <stem>` | Find stylistically similar films in the archive |
 | `tag <stem> --set k=v` | Add per-wedding metadata (venue, season, music_genre, …) |
 | `predict-cuts <song>` | Predict cut points for a song; emit FCPXML marker track |
 | `learn-shots` | Build `shot-profile.json` from corpus thumbnails (composition + emotion) |
 | `score-clips <path>` | Score raw footage against `shot-profile.json`; optional trim detection |
+| `eddie-plan` | Translate the style profile into settings for the Eddie video editor (see [Working with Eddie](#working-with-eddie)) |
+| `eddie-selects <clip-scores.json>` | Turn scored raw clips into soundbites for Eddie's `create_edit_result` |
 | `export-notebooklm` | Write a NotebookLM-ingestible markdown brief |
 | `serve` | Boot the dashboard at http://127.0.0.1:7421 |
 | `mcp-serve` | Run the MCP server (for Claude Desktop) |
@@ -320,7 +322,9 @@ Restart Claude Desktop. The toolset shows up under the connections menu.
 
 **Edit / Correct** — `set_film_metadata`, `set_chapter_label`
 
-**Generate** — `compare_fcpxml`, `predict_cuts`, `export_for_notebooklm`
+**Generate** — `compare_timeline` (FCPXML or OTIO), `compare_fcpxml`, `predict_cuts`, `export_for_notebooklm`
+
+**Eddie** — `get_eddie_plan`, `get_eddie_selects` (see [Working with Eddie](#working-with-eddie))
 
 **Resources** auto-loadable as conversation context:
 - `film-style://profile` — typed style-profile.json
@@ -351,6 +355,49 @@ Restart Claude Desktop. The toolset shows up under the connections menu.
 > *"Using my profile, propose where to cut a 3-minute teaser to `~/music/new-song.mp3`."*
 >
 > Claude reads `get_style_profile()`, calls `predict_cuts(song_path=..., target_duration_sec=180)`, gets back snapped-to-beat timestamps + an FCPXML marker track.
+
+---
+
+## Working with Eddie
+
+Eddie is an AI video editor that Claude can drive
+over MCP. It builds and changes edits but does not know how *you* cut. Run
+both MCP servers in the same Claude session (`film-style mcp-serve` next to
+Eddie's connector) and this tool supplies the measured style that Eddie
+builds to.
+
+**1. Plan.** `get_eddie_plan` (or `film-style eddie-plan`, which writes
+`eddie-plan.json` next to your profile) translates `style-profile.json` into
+arguments for Eddie's own tools:
+
+| Eddie tool | What the plan supplies |
+|---|---|
+| `create_edit_result` | `brief` (your measured rules, including shot length per part of the day), `targetDurationMinutes`, `minimumDurationMinutes` |
+| `set_transitions` | Whether to fade to black at the end and how many dissolves to place |
+| `snap_cuts_to_beats` | Whether to snap, from how often your cuts land on a beat |
+| `grade_edit` | A gentle starting grade with `lookMatch: true`. Approximate: measured from finished films, applied to ungraded footage |
+| `apply_style` | A description of your look in at most 300 characters, to preview (`mode: "plan"`) or keep as a workspace look (`mode: "save"`) |
+| `create_recipe` | A reusable "in my style" prompt template with length and focus blanks, so the same build runs from Eddie's app |
+
+**2. Selects.** After `film-style score-clips <footage> --detect-trims`,
+`get_eddie_selects` (or `film-style eddie-selects clip-scores.json`) keeps
+clips above a score and returns them as `create_edit_result` soundbites with
+`in`/`out` set to each clip's usable range.
+
+**3. Check.** Export the edit from Eddie (`export_edit` as `fcpxml` or
+`otio`) and run `compare_timeline` on it (or `film-style compare cut.otio`).
+Besides the overall and per-decile drift, `shot_deviations` lists every shot
+that runs long or short for its point in the film, with timeline start and
+end seconds, so the matching segment can be trimmed or extended in Eddie.
+B-roll laid over interview footage counts as its own shot, because that is
+what the viewer sees.
+
+A typical request: *"Read my Eddie plan, build the highlight film in Eddie
+from my selects, apply the transitions and beat snapping, export it as OTIO
+and compare it against my style. Fix the shots that are off pace."*
+
+Nothing here calls Eddie itself, and Eddie charges credits for some of its
+tools (exports, renders, reference analysis).
 
 ---
 

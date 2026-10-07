@@ -11,7 +11,6 @@ import json
 import mimetypes
 import re
 import socketserver
-import tempfile
 import threading
 import webbrowser
 import zipfile
@@ -23,10 +22,11 @@ from urllib.parse import unquote, urlparse
 
 from .aggregator import aggregate
 from .config import CONFIG_PATH, Config, load as load_config
-from .fcpxml_parser import parse as parse_fcpxml
+from .compare import build_report as _build_compare_report
 from .genre_pack import load as load_genre_pack
 from .metadata import curated_keys, merge as merge_md
 from .schemas import FilmAnalysis
+from .timeline import load_timeline_content
 
 DATA_ROOT = Path.home() / ".film-style-analyzer"
 
@@ -659,25 +659,16 @@ def _make_handler():
             body = self.rfile.read(length) if length else b""
 
             if path == "/api/compare":
-                # Body is raw FCPXML bytes. We write to a tempfile because
-                # parse() takes a Path.
+                # Body is raw FCPXML or OTIO (JSON) bytes.
                 if not body:
                     return self.send_error(HTTPStatus.BAD_REQUEST, "empty body")
-                with tempfile.NamedTemporaryFile(suffix=".fcpxml", delete=False) as tmp:
-                    tmp.write(body)
-                    tmp_path = Path(tmp.name)
                 try:
-                    cut = parse_fcpxml(tmp_path)
+                    cut = load_timeline_content(body)
                 except Exception as e:
                     return self._send_json(
-                        {"error": f"could not parse FCPXML: {e}"},
+                        {"error": f"could not parse timeline: {e}"},
                         status=HTTPStatus.BAD_REQUEST,
                     )
-                finally:
-                    try:
-                        tmp_path.unlink()
-                    except OSError:
-                        pass
 
                 films = _load_films()
                 profile = aggregate(films) if films else {}
@@ -748,91 +739,6 @@ def _make_handler():
             return self.send_error(HTTPStatus.NOT_FOUND)
 
     return Handler
-
-
-def _build_compare_report(cut: dict, profile: dict) -> dict:
-    """Decile-level deviation report between an FCPXML cut and the profile."""
-    if not profile:
-        return {"empty_profile": True, "cut": cut}
-
-    pdur = profile.get("duration", {})
-    pclips = profile.get("clip_counts", {})
-    ppace = profile.get("pacing", {})
-    ptrans = profile.get("transitions", {})
-
-    expected_clips = pclips.get("avg") or 0
-    expected_avg = ppace.get("avg_clip_sec") or 0
-    expected_diss = ptrans.get("avg_dissolves_per_film") or 0
-    expected_deciles = ppace.get("avg_deciles") or []
-    durations = cut.get("clip_durations") or []
-
-    actual_deciles: list[float] = []
-    if durations:
-        n = len(durations)
-        for i in range(10):
-            slc = durations[i * n // 10:(i + 1) * n // 10]
-            actual_deciles.append(round(sum(slc) / max(1, len(slc)), 3) if slc else 0.0)
-
-    pacing_diff = []
-    for i, (a, e) in enumerate(zip(actual_deciles, expected_deciles)):
-        delta_pct = ((a - e) / e * 100) if e else 0
-        pacing_diff.append({
-            "decile": i,
-            "actual": a,
-            "expected": e,
-            "delta_pct": round(delta_pct, 1),
-        })
-
-    delta_clips = (
-        (cut["clip_count"] - expected_clips) / expected_clips * 100
-        if expected_clips else 0
-    )
-    delta_pace = (
-        (cut["avg_clip_sec"] - expected_avg) / expected_avg * 100
-        if expected_avg else 0
-    )
-
-    suggestions: list[str] = []
-    if abs(delta_pace) > 15:
-        direction = "Tighten" if delta_pace > 0 else "Lengthen"
-        suggestions.append(f"{direction} clips toward {expected_avg:.2f}s avg.")
-    if abs(delta_clips) > 20:
-        direction = "Remove" if delta_clips > 0 else "Add"
-        suggestions.append(f"{direction} clips toward ~{expected_clips:.0f} total.")
-    if expected_diss and cut["dissolves"] > expected_diss * 1.5:
-        suggestions.append(f"Reduce dissolves toward ~{expected_diss:.1f}.")
-    for d in pacing_diff:
-        if abs(d["delta_pct"]) > 25 and d["expected"]:
-            verb = "tighten" if d["delta_pct"] > 0 else "lengthen"
-            suggestions.append(
-                f"At {d['decile']*10}-{(d['decile']+1)*10}% — {verb} "
-                f"({d['actual']:.2f}s → {d['expected']:.2f}s)."
-            )
-
-    duration_in_range = (
-        pdur.get("min_sec") is not None and
-        pdur.get("max_sec") is not None and
-        pdur["min_sec"] <= cut["total_duration_sec"] <= pdur["max_sec"]
-    )
-
-    return {
-        "empty_profile": False,
-        "profile": {
-            "film_count": profile.get("film_count", 0),
-            "duration": pdur,
-            "clip_counts": pclips,
-            "pacing": ppace,
-            "transitions": ptrans,
-        },
-        "cut": cut,
-        "deltas": {
-            "clip_count_pct": round(delta_clips, 1),
-            "avg_clip_pct": round(delta_pace, 1),
-            "duration_in_range": duration_in_range,
-        },
-        "pacing_diff": pacing_diff,
-        "suggestions": suggestions,
-    }
 
 
 # ---------- entry point ------------------------------------------------------

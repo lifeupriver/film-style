@@ -1999,16 +1999,16 @@ export function renderCompareIntro() {
       "data-id": "dropzone",
     },
     [
-      el("p", { class: "dropzone__sub" }, ["Plate XII · Drop FCPXML"]),
+      el("p", { class: "dropzone__sub" }, ["Plate XII · Drop a timeline"]),
       el("p", { class: "dropzone__title" }, [
-        "Drop a .fcpxml here, or click to browse.",
+        "Drop a .fcpxml or .otio here, or click to browse.",
       ]),
       el("p", { class: "dropzone__hint" }, [
         "Nothing leaves this machine. Files are parsed locally and discarded.",
       ]),
       el("input", {
         type: "file",
-        accept: ".fcpxml,.xml",
+        accept: ".fcpxml,.xml,.otio",
         style: { display: "none" },
         "data-id": "file-input",
       }),
@@ -2095,6 +2095,36 @@ export function renderCompareResult(report) {
     ),
   ]);
   root.appendChild(chartWrap);
+
+  const shots = report.shot_deviations || [];
+  if (shots.length) {
+    const fmt = (sec) => {
+      const m = Math.floor(sec / 60);
+      return `${m}:${(sec - m * 60).toFixed(2).padStart(5, "0")}`;
+    };
+    root.appendChild(
+      el("header", { class: "section-rule" }, [
+        el("span", { class: "section-rule__plate" }, ["Plate XIV·b"]),
+        el("span", { class: "section-rule__title" }, [
+          `Shots off pace · ${shots.length}`,
+        ]),
+        el("span", { class: "section-rule__line" }),
+      ])
+    );
+    root.appendChild(
+      el(
+        "ol",
+        { class: "suggestions" },
+        shots.slice(0, 20).map((s) =>
+          el("li", {}, [
+            `Shot ${s.index} at ${fmt(s.start_sec)}${s.name ? ` (${s.name})` : ""}: ` +
+              `${s.duration_sec.toFixed(2)}s against ${s.expected_sec.toFixed(2)}s here — ` +
+              `${s.action} by ${s.by_sec.toFixed(2)}s.`,
+          ])
+        )
+      )
+    );
+  }
 
   if (report.suggestions?.length) {
     root.appendChild(
