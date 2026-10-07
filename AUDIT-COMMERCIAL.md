@@ -8,11 +8,13 @@ Three parallel reviews fed this report: the product and code, the market, and la
 
 ## 0. Urgent, before anything else
 
-**A credential is committed in this public repository.** The file `docs/handoffs/2026-05-07-add-12-vimeo-films.md` (line 71) contains what appears to be a real `VIMEO_ACCESS_TOKEN`. The same file also contains client couple names, Vimeo video IDs and a local home-directory path. The repository is public.
+**A credential was committed in this public repository.** A handoff document under `docs/handoffs/` contained what appears to be a real `VIMEO_ACCESS_TOKEN`, along with client couple names, Vimeo video IDs and a local home-directory path.
 
-1. **Revoke the token in Vimeo today.** It should be treated as compromised already, because public repositories are scraped.
-2. Remove the file, or redact it, and purge it from git history. Alternatively, make the repository private.
-3. Remove client names from `docs/`. `CONTRIBUTING.md` already says client data must not be committed.
+**Status (2026-10-07):** the file has been removed from the history of every branch with `git filter-repo`, and all branches were force-pushed. Three things still remain:
+
+1. **Revoke the token in Vimeo.** It was public for months, so treat it as compromised whether or not it is still in the history.
+2. **GitHub still holds the old commits under pull-request refs and in its cache.** These are the read-only `refs/pull/1–5` refs, which cannot be force-pushed. Ask GitHub Support to purge cached views and run garbage collection on the old commits. Any existing forks or clones also keep the old history.
+3. **Re-clone or hard-reset** every local checkout and agent worktree, so the old history is not pushed back.
 
 This report deliberately does not repeat the token or any client names.
 
